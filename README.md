@@ -2,6 +2,48 @@
 
 Keep apps up to date based on GitHub releases. Supports multiple Linux distributions and package managers.
 
+## Installation
+
+### openSUSE (zypper)
+
+```bash
+curl -fsSL https://github.com/raymens/Galvaan/releases/latest/download/galvaan-linux-x86_64.rpm -o /tmp/galvaan.rpm
+sudo zypper install /tmp/galvaan.rpm
+rm /tmp/galvaan.rpm
+```
+
+### Fedora / RHEL (dnf)
+
+```bash
+curl -fsSL https://github.com/raymens/Galvaan/releases/latest/download/galvaan-linux-x86_64.rpm -o /tmp/galvaan.rpm
+sudo dnf install /tmp/galvaan.rpm
+rm /tmp/galvaan.rpm
+```
+
+### Debian / Ubuntu (apt)
+
+```bash
+curl -fsSL https://github.com/raymens/Galvaan/releases/latest/download/galvaan-linux-x86_64.deb -o /tmp/galvaan.deb
+sudo apt-get install /tmp/galvaan.deb
+rm /tmp/galvaan.deb
+```
+
+### Arch Linux (pacman)
+
+```bash
+curl -fsSL https://github.com/raymens/Galvaan/releases/latest/download/galvaan-linux-x86_64 -o /tmp/galvaan
+sudo install -Dm755 /tmp/galvaan /usr/local/bin/galvaan
+rm /tmp/galvaan
+```
+
+### From source
+
+```bash
+cargo install --git https://github.com/raymens/Galvaan
+```
+
+Once installed, galvaan can keep itself up to date (see [self-updating](#keeping-galvaan-itself-up-to-date)).
+
 ## Supported distros & package managers
 
 | Distro family | Package manager | Asset format |
