@@ -4,10 +4,12 @@ use serde::Deserialize;
 #[derive(Debug, Deserialize, Clone)]
 pub struct Release {
     pub tag_name: String,
+    #[allow(dead_code)]
     pub name: Option<String>,
     pub prerelease: bool,
     pub draft: bool,
     pub assets: Vec<Asset>,
+    #[allow(dead_code)]
     pub html_url: String,
 }
 
@@ -16,6 +18,7 @@ pub struct Asset {
     pub name: String,
     pub browser_download_url: String,
     pub size: u64,
+    #[allow(dead_code)]
     pub content_type: String,
 }
 

@@ -18,6 +18,7 @@ pub struct InstallOptions {
 }
 
 /// Trait for package manager implementations
+#[allow(dead_code)]
 pub trait PackageManager {
     /// Install a package from a local file path
     fn install(&self, package_path: &Path, options: &InstallOptions) -> Result<()>;
