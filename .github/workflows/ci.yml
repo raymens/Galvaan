@@ -137,11 +137,16 @@ jobs:
       - name: Rename binary
         run: mv artifacts/bin/galvaan artifacts/galvaan-linux-x86_64
 
+      - name: Rename packages
+        run: |
+          mv artifacts/deb/*.deb artifacts/galvaan-linux-x86_64.deb
+          mv artifacts/rpm/*.rpm artifacts/galvaan-linux-x86_64.rpm
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           files: |
             artifacts/galvaan-linux-x86_64
-            artifacts/deb/*.deb
-            artifacts/rpm/*.rpm
+            artifacts/galvaan-linux-x86_64.deb
+            artifacts/galvaan-linux-x86_64.rpm
