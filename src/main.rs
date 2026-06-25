@@ -904,12 +904,12 @@ mod tests {
 
     #[test]
     fn test_install_options_cli_overrides() {
-        let config = Config::default();
+        let _config = Config::default();
         // Simulate CLI --auto-approve always -q
         let auto_approve = parse_auto_approve("always").unwrap();
         let opts = InstallOptions {
             auto_approve,
-            quiet: true || config.settings.quiet_package_manager,
+            quiet: true,
             allow_unsigned: false,
         };
         assert_eq!(opts.auto_approve, AutoApprove::Always);
@@ -919,14 +919,14 @@ mod tests {
     #[test]
     fn test_app_name_defaults_to_repo_name() {
         let repo = "github/app";
-        let app_name = repo.split('/').last().unwrap_or(repo).to_string();
+        let app_name = repo.split('/').next_back().unwrap_or(repo).to_string();
         assert_eq!(app_name, "app");
     }
 
     #[test]
     fn test_app_name_handles_no_slash() {
         let repo = "singlename";
-        let app_name = repo.split('/').last().unwrap_or(repo).to_string();
+        let app_name = repo.split('/').next_back().unwrap_or(repo).to_string();
         assert_eq!(app_name, "singlename");
     }
 
