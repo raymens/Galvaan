@@ -137,6 +137,58 @@ run_test "explicit pm shown in list" \
 
 galvaan remove test-explicit >/dev/null 2>&1
 
+# ─── Version pinning ──────────────────────────────────────────────────────────
+
+echo "=== Version pinning ==="
+
+run_test "add with --pin" \
+    assert_exit_0 galvaan add owner/pinned-repo --name pinned-app \
+        --asset-pattern "*.rpm" --pin "1.*"
+
+run_test "list shows pin flag" \
+    assert_output_contains "pin:1.*" galvaan list
+
+run_test "pin command" \
+    assert_exit_0 galvaan pin pinned-app ">=2.0.0,<3.0.0"
+
+run_test "pin updated in list" \
+    assert_output_contains "pin:>=2.0.0,<3.0.0" galvaan list
+
+run_test "unpin command" \
+    assert_exit_0 galvaan unpin pinned-app
+
+run_test "pin removed from list" \
+    assert_exit_nonzero assert_output_contains "pin:" galvaan list
+
+run_test "unpin already unpinned" \
+    assert_output_contains "not pinned" galvaan unpin pinned-app
+
+run_test "pin nonexistent app fails" \
+    assert_exit_nonzero galvaan pin nonexistent-app "1.*"
+
+galvaan remove pinned-app >/dev/null 2>&1
+
+# ─── Prerelease support ──────────────────────────────────────────────────────
+
+echo "=== Prerelease support ==="
+
+run_test "add with --prerelease" \
+    assert_exit_0 galvaan add owner/pre-repo --name pre-app \
+        --asset-pattern "*.rpm" --prerelease
+
+run_test "list shows prerelease flag" \
+    assert_output_contains "prerelease" galvaan list
+
+run_test "add with both --prerelease and --pin" \
+    assert_exit_0 galvaan add owner/combo-repo --name combo-app \
+        --asset-pattern "*.rpm" --prerelease --pin "^1.0"
+
+run_test "list shows both flags" \
+    assert_output_contains "prerelease" galvaan list
+
+galvaan remove pre-app >/dev/null 2>&1
+galvaan remove combo-app >/dev/null 2>&1
+
 # ─── Package manager detection ────────────────────────────────────────────────
 
 echo "=== Package manager ($PM) ==="

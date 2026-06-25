@@ -33,6 +33,12 @@ pub enum Commands {
         /// Package manager to use (overrides default_package_manager from config)
         #[arg(short, long)]
         package_manager: Option<String>,
+        /// Allow prerelease versions for this app
+        #[arg(long)]
+        prerelease: bool,
+        /// Pin to a version constraint (e.g. "1.0.24", "1.*", ">=2.0.0,<3.0.0")
+        #[arg(long)]
+        pin: Option<String>,
     },
 
     /// Remove a tracked app
@@ -48,12 +54,35 @@ pub enum Commands {
     Check {
         /// Specific app name to check (checks all if omitted)
         name: Option<String>,
+        /// Include prerelease versions (overrides per-app setting)
+        #[arg(long)]
+        prerelease: bool,
     },
 
     /// Update apps (all or a specific one)
     Update {
         /// Specific app name to update (updates all if omitted)
         name: Option<String>,
+        /// Install a specific version instead of latest
+        #[arg(long)]
+        version: Option<String>,
+        /// Include prerelease versions (overrides per-app setting)
+        #[arg(long)]
+        prerelease: bool,
+    },
+
+    /// Pin an app to a version constraint
+    Pin {
+        /// Name of the app to pin
+        name: String,
+        /// Version constraint (e.g. "1.0.24", "1.*", ">=2.0.0,<3.0.0")
+        constraint: String,
+    },
+
+    /// Remove version pin from an app
+    Unpin {
+        /// Name of the app to unpin
+        name: String,
     },
 
     /// View or modify configuration settings

@@ -40,11 +40,17 @@ async fn main() -> Result<()> {
             name,
             asset_pattern,
             package_manager,
-        } => cmd_add(repo, name, asset_pattern, package_manager)?,
+            prerelease,
+            pin,
+        } => cmd_add(repo, name, asset_pattern, package_manager, prerelease, pin)?,
         Commands::Remove { name } => cmd_remove(name)?,
         Commands::List => cmd_list()?,
-        Commands::Check { name } => cmd_check(name).await?,
-        Commands::Update { name } => cmd_update(name, &install_opts).await?,
+        Commands::Check { name, prerelease } => cmd_check(name, prerelease).await?,
+        Commands::Update { name, version, prerelease } => {
+            cmd_update(name, &install_opts, version, prerelease).await?
+        }
+        Commands::Pin { name, constraint } => cmd_pin(name, constraint)?,
+        Commands::Unpin { name } => cmd_unpin(name)?,
         Commands::Config { action } => cmd_config(action)?,
         Commands::Completions { shell } => cli::generate_completions(shell),
     }
@@ -69,6 +75,8 @@ fn cmd_add(
     name: Option<String>,
     asset_pattern: String,
     pm: Option<String>,
+    allow_prerelease: bool,
+    version_pin: Option<String>,
 ) -> Result<()> {
     let mut config = Config::load()?;
 
@@ -84,19 +92,33 @@ fn cmd_add(
         None => config.settings.default_package_manager.clone(),
     };
 
+    // Validate pin constraint if provided
+    if let Some(ref pin) = version_pin {
+        validate_version_pin(pin)?;
+    }
+
     let app = TrackedApp {
         repo: repo.clone(),
         asset_pattern,
         package_manager: pm_type,
         installed_version: None,
         last_checked: None,
+        allow_prerelease,
+        version_pin: version_pin.clone(),
     };
 
     config.apps.insert(app_name.clone(), app);
     config.save()?;
 
     info!(app = %app_name, repo = %repo, "Added tracked app");
-    println!("✓ Added '{app_name}' (tracking {repo})");
+    let mut msg = format!("✓ Added '{app_name}' (tracking {repo})");
+    if allow_prerelease {
+        msg.push_str(" [prereleases enabled]");
+    }
+    if let Some(pin) = &version_pin {
+        msg.push_str(&format!(" [pinned: {pin}]"));
+    }
+    println!("{msg}");
     Ok(())
 }
 
@@ -113,6 +135,53 @@ fn cmd_remove(name: String) -> Result<()> {
     Ok(())
 }
 
+fn cmd_pin(name: String, constraint: String) -> Result<()> {
+    let mut config = Config::load()?;
+    validate_version_pin(&constraint)?;
+
+    let app = config.apps.get_mut(&name)
+        .with_context(|| format!("App '{name}' not found"))?;
+    app.version_pin = Some(constraint.clone());
+    config.save()?;
+    println!("✓ Pinned '{name}' to {constraint}");
+    Ok(())
+}
+
+fn cmd_unpin(name: String) -> Result<()> {
+    let mut config = Config::load()?;
+
+    let app = config.apps.get_mut(&name)
+        .with_context(|| format!("App '{name}' not found"))?;
+
+    if app.version_pin.is_some() {
+        app.version_pin = None;
+        config.save()?;
+        println!("✓ Removed version pin from '{name}'");
+    } else {
+        println!("'{name}' is not pinned");
+    }
+    Ok(())
+}
+
+/// Validate that a version pin string is parseable
+fn validate_version_pin(pin: &str) -> Result<()> {
+    use config::version_matches_pin;
+    // Try matching against a dummy version to ensure the pin is syntactically valid
+    // Wildcard and exact pins always work; semver ranges may fail to parse
+    if pin.starts_with('>') || pin.starts_with('<') || pin.starts_with('^') || pin.starts_with('~') || pin.contains(',') {
+        if semver::VersionReq::parse(pin.trim_start_matches('v')).is_err() {
+            anyhow::bail!("Invalid version constraint: '{pin}'. Examples: '1.0.24', '1.*', '>=2.0.0,<3.0.0', '^1.0'");
+        }
+    }
+    // Quick sanity check — a pin like "" is invalid
+    if pin.is_empty() {
+        anyhow::bail!("Version pin cannot be empty");
+    }
+    // Run through the match function to make sure it doesn't panic
+    let _ = version_matches_pin("0.0.0", pin);
+    Ok(())
+}
+
 fn cmd_list() -> Result<()> {
     let config = Config::load()?;
 
@@ -121,20 +190,28 @@ fn cmd_list() -> Result<()> {
         return Ok(());
     }
 
-    println!("{:<20} {:<30} {:<15} {:<10}", "NAME", "REPO", "VERSION", "PKG MGR");
-    println!("{}", "-".repeat(75));
+    println!("{:<20} {:<30} {:<15} {:<10} {}", "NAME", "REPO", "VERSION", "PKG MGR", "FLAGS");
+    println!("{}", "-".repeat(95));
 
     for (name, app) in &config.apps {
         let version = app.installed_version.as_deref().unwrap_or("unknown");
+        let mut flags = Vec::new();
+        if app.allow_prerelease {
+            flags.push("prerelease".to_string());
+        }
+        if let Some(ref pin) = app.version_pin {
+            flags.push(format!("pin:{pin}"));
+        }
+        let flags_str = if flags.is_empty() { String::new() } else { flags.join(", ") };
         println!(
-            "{:<20} {:<30} {:<15} {:<10}",
-            name, app.repo, version, app.package_manager
+            "{:<20} {:<30} {:<15} {:<10} {}",
+            name, app.repo, version, app.package_manager, flags_str
         );
     }
     Ok(())
 }
 
-async fn cmd_check(name: Option<String>) -> Result<()> {
+async fn cmd_check(name: Option<String>, prerelease_override: bool) -> Result<()> {
     let mut config = Config::load()?;
     let client = GitHubClient::new()?;
 
@@ -152,14 +229,45 @@ async fn cmd_check(name: Option<String>) -> Result<()> {
 
     for (app_name, app) in &apps {
         print!("Checking {app_name}... ");
-        match client.get_latest_release(&app.repo).await {
+
+        let allow_pre = prerelease_override || app.allow_prerelease;
+        let needs_release_list = allow_pre || app.version_pin.is_some();
+
+        let release_result = if needs_release_list {
+            // Need full list to filter by prerelease/pin
+            match client.get_releases(&app.repo, 50).await {
+                Ok(releases) => {
+                    let filter = github::ReleaseFilter {
+                        allow_prerelease: allow_pre,
+                        version_pin: app.version_pin.as_deref(),
+                        specific_version: None,
+                    };
+                    match github::find_best_release(&releases, &filter) {
+                        Some(r) => Ok(r.clone()),
+                        None => {
+                            let mut reason = String::from("no matching release found");
+                            if let Some(ref pin) = app.version_pin {
+                                reason.push_str(&format!(" for pin '{pin}'"));
+                            }
+                            Err(anyhow::anyhow!(reason))
+                        }
+                    }
+                }
+                Err(e) => Err(e),
+            }
+        } else {
+            client.get_latest_release(&app.repo).await
+        };
+
+        match release_result {
             Ok(release) => {
                 let current = app.installed_version.as_deref().unwrap_or("none");
                 let latest = &release.tag_name;
+                let pre_label = if release.prerelease { " (prerelease)" } else { "" };
                 if current == *latest || current == latest.trim_start_matches('v') {
-                    println!("✓ up to date ({latest})");
+                    println!("✓ up to date ({latest}){pre_label}");
                 } else {
-                    println!("⬆ update available: {current} → {latest}");
+                    println!("⬆ update available: {current} → {latest}{pre_label}");
                 }
                 info!(app = %app_name, current = %current, latest = %latest, "Checked for updates");
             }
@@ -178,7 +286,12 @@ async fn cmd_check(name: Option<String>) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_update(name: Option<String>, install_opts: &InstallOptions) -> Result<()> {
+async fn cmd_update(
+    name: Option<String>,
+    install_opts: &InstallOptions,
+    specific_version: Option<String>,
+    prerelease_override: bool,
+) -> Result<()> {
     let mut config = Config::load()?;
     let client = GitHubClient::new()?;
 
@@ -194,21 +307,82 @@ async fn cmd_update(name: Option<String>, install_opts: &InstallOptions) -> Resu
         None => config.apps.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
     };
 
+    // --version only makes sense for a single app
+    if specific_version.is_some() && apps.len() > 1 {
+        anyhow::bail!("--version can only be used when updating a single app");
+    }
+
     for (app_name, app) in &apps {
         println!("Checking {app_name} for updates...");
-        let release = match client.get_latest_release(&app.repo).await {
-            Ok(r) => r,
-            Err(e) => {
-                eprintln!("  ✗ Failed to check {app_name}: {e}");
-                continue;
+
+        let allow_pre = prerelease_override || app.allow_prerelease;
+
+        // Determine which release to install
+        let release = if let Some(ref ver) = specific_version {
+            // Try fetching by exact tag first (with and without 'v' prefix)
+            let tag_attempts = if ver.starts_with('v') {
+                vec![ver.clone(), ver.trim_start_matches('v').to_string()]
+            } else {
+                vec![format!("v{ver}"), ver.clone()]
+            };
+            let mut found = None;
+            for tag in &tag_attempts {
+                match client.get_release_by_tag(&app.repo, tag).await {
+                    Ok(r) => { found = Some(r); break; }
+                    Err(_) => continue,
+                }
+            }
+            match found {
+                Some(r) => r,
+                None => {
+                    eprintln!("  ✗ Version '{ver}' not found for {}", app.repo);
+                    continue;
+                }
+            }
+        } else {
+            let needs_release_list = allow_pre || app.version_pin.is_some();
+            if needs_release_list {
+                match client.get_releases(&app.repo, 50).await {
+                    Ok(releases) => {
+                        let filter = github::ReleaseFilter {
+                            allow_prerelease: allow_pre,
+                            version_pin: app.version_pin.as_deref(),
+                            specific_version: None,
+                        };
+                        match github::find_best_release(&releases, &filter) {
+                            Some(r) => r.clone(),
+                            None => {
+                                let mut reason = format!("  ✗ No matching release found for {app_name}");
+                                if let Some(ref pin) = app.version_pin {
+                                    reason.push_str(&format!(" (pin: {pin})"));
+                                }
+                                eprintln!("{reason}");
+                                continue;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("  ✗ Failed to check {app_name}: {e}");
+                        continue;
+                    }
+                }
+            } else {
+                match client.get_latest_release(&app.repo).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        eprintln!("  ✗ Failed to check {app_name}: {e}");
+                        continue;
+                    }
+                }
             }
         };
 
         let latest = release.tag_name.trim_start_matches('v').to_string();
         let current = app.installed_version.as_deref().unwrap_or("");
 
-        if current == latest || current == release.tag_name {
-            println!("  ✓ {app_name} is already up to date ({latest})");
+        if specific_version.is_none() && (current == latest || current == release.tag_name) {
+            let pre_label = if release.prerelease { " (prerelease)" } else { "" };
+            println!("  ✓ {app_name} is already up to date ({latest}){pre_label}");
             continue;
         }
 
@@ -233,12 +407,13 @@ async fn cmd_update(name: Option<String>, install_opts: &InstallOptions) -> Resu
             }
         };
 
+        let pre_label = if release.prerelease { " (prerelease)" } else { "" };
         println!(
-            "  Downloading {} ({:.1} MB)...",
+            "  Downloading {} ({:.1} MB)...{pre_label}",
             asset.name,
             asset.size as f64 / 1_048_576.0
         );
-        info!(app = %app_name, asset = %asset.name, size = asset.size, "Downloading asset");
+        info!(app = %app_name, asset = %asset.name, size = asset.size, version = %latest, "Downloading asset");
 
         let tmp_dir = TempDir::new().context("Failed to create temp directory")?;
         let download_path = tmp_dir.path().join(&asset.name);
@@ -258,7 +433,7 @@ async fn cmd_update(name: Option<String>, install_opts: &InstallOptions) -> Resu
         }
 
         info!(app = %app_name, version = %latest, "Updated successfully");
-        println!("  ✓ {app_name} updated to {latest}");
+        println!("  ✓ {app_name} updated to {latest}{pre_label}");
     }
 
     config.save()?;
@@ -359,11 +534,30 @@ mod tests {
             "--asset-pattern", "*-linux-x64.rpm",
         ]);
         match cli.command {
-            Commands::Add { repo, name, asset_pattern, package_manager } => {
+            Commands::Add { repo, name, asset_pattern, package_manager, prerelease, pin } => {
                 assert_eq!(repo, "github/app");
                 assert_eq!(name.as_deref(), Some("copilot"));
                 assert_eq!(asset_pattern, "*-linux-x64.rpm");
-                assert!(package_manager.is_none()); // defaults to config setting
+                assert!(package_manager.is_none());
+                assert!(!prerelease);
+                assert!(pin.is_none());
+            }
+            _ => panic!("Expected Add command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_add_with_prerelease_and_pin() {
+        let cli = Cli::parse_from([
+            "galvaan", "add", "owner/repo",
+            "--asset-pattern", "*.rpm",
+            "--prerelease",
+            "--pin", "1.*",
+        ]);
+        match cli.command {
+            Commands::Add { prerelease, pin, .. } => {
+                assert!(prerelease);
+                assert_eq!(pin.as_deref(), Some("1.*"));
             }
             _ => panic!("Expected Add command"),
         }
@@ -388,7 +582,11 @@ mod tests {
     fn test_cli_parse_update_with_name() {
         let cli = Cli::parse_from(["galvaan", "update", "copilot"]);
         match cli.command {
-            Commands::Update { name } => assert_eq!(name.as_deref(), Some("copilot")),
+            Commands::Update { name, version, prerelease } => {
+                assert_eq!(name.as_deref(), Some("copilot"));
+                assert!(version.is_none());
+                assert!(!prerelease);
+            }
             _ => panic!("Expected Update command"),
         }
     }
@@ -397,8 +595,66 @@ mod tests {
     fn test_cli_parse_update_all() {
         let cli = Cli::parse_from(["galvaan", "update"]);
         match cli.command {
-            Commands::Update { name } => assert!(name.is_none()),
+            Commands::Update { name, version, prerelease } => {
+                assert!(name.is_none());
+                assert!(version.is_none());
+                assert!(!prerelease);
+            }
             _ => panic!("Expected Update command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_update_specific_version() {
+        let cli = Cli::parse_from(["galvaan", "update", "copilot", "--version", "v1.0.24"]);
+        match cli.command {
+            Commands::Update { name, version, .. } => {
+                assert_eq!(name.as_deref(), Some("copilot"));
+                assert_eq!(version.as_deref(), Some("v1.0.24"));
+            }
+            _ => panic!("Expected Update command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_update_prerelease() {
+        let cli = Cli::parse_from(["galvaan", "update", "--prerelease"]);
+        match cli.command {
+            Commands::Update { prerelease, .. } => assert!(prerelease),
+            _ => panic!("Expected Update command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_check_prerelease() {
+        let cli = Cli::parse_from(["galvaan", "check", "myapp", "--prerelease"]);
+        match cli.command {
+            Commands::Check { name, prerelease } => {
+                assert_eq!(name.as_deref(), Some("myapp"));
+                assert!(prerelease);
+            }
+            _ => panic!("Expected Check command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_pin() {
+        let cli = Cli::parse_from(["galvaan", "pin", "copilot", "1.*"]);
+        match cli.command {
+            Commands::Pin { name, constraint } => {
+                assert_eq!(name, "copilot");
+                assert_eq!(constraint, "1.*");
+            }
+            _ => panic!("Expected Pin command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_unpin() {
+        let cli = Cli::parse_from(["galvaan", "unpin", "copilot"]);
+        match cli.command {
+            Commands::Unpin { name } => assert_eq!(name, "copilot"),
+            _ => panic!("Expected Unpin command"),
         }
     }
 
@@ -457,7 +713,10 @@ mod tests {
     fn test_cli_parse_check_specific() {
         let cli = Cli::parse_from(["galvaan", "check", "copilot"]);
         match cli.command {
-            Commands::Check { name } => assert_eq!(name.as_deref(), Some("copilot")),
+            Commands::Check { name, prerelease } => {
+                assert_eq!(name.as_deref(), Some("copilot"));
+                assert!(!prerelease);
+            }
             _ => panic!("Expected Check command"),
         }
     }
@@ -466,7 +725,10 @@ mod tests {
     fn test_cli_parse_check_all() {
         let cli = Cli::parse_from(["galvaan", "check"]);
         match cli.command {
-            Commands::Check { name } => assert!(name.is_none()),
+            Commands::Check { name, prerelease } => {
+                assert!(name.is_none());
+                assert!(!prerelease);
+            }
             _ => panic!("Expected Check command"),
         }
     }

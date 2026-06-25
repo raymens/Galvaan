@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct Release {
     pub tag_name: String,
     pub name: Option<String>,
@@ -11,7 +11,7 @@ pub struct Release {
     pub html_url: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct Asset {
     pub name: String,
     pub browser_download_url: String,
@@ -46,6 +46,54 @@ impl GitHubClient {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
             anyhow::bail!("GitHub API error for {repo}: {status} - {body}");
+        }
+
+        let release: Release = response
+            .json()
+            .await
+            .with_context(|| format!("Failed to parse release JSON for {repo}"))?;
+        Ok(release)
+    }
+
+    /// Fetch recent releases (up to 100) for a repo, including prereleases
+    pub async fn get_releases(&self, repo: &str, per_page: u32) -> Result<Vec<Release>> {
+        let url = format!(
+            "https://api.github.com/repos/{repo}/releases?per_page={per_page}"
+        );
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .with_context(|| format!("Failed to fetch releases for {repo}"))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("GitHub API error for {repo}: {status} - {body}");
+        }
+
+        let releases: Vec<Release> = response
+            .json()
+            .await
+            .with_context(|| format!("Failed to parse releases JSON for {repo}"))?;
+        Ok(releases)
+    }
+
+    /// Fetch a specific release by tag name
+    pub async fn get_release_by_tag(&self, repo: &str, tag: &str) -> Result<Release> {
+        let url = format!("https://api.github.com/repos/{repo}/releases/tags/{tag}");
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .with_context(|| format!("Failed to fetch release {tag} for {repo}"))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            anyhow::bail!("Release '{tag}' not found for {repo}: {status} - {body}");
         }
 
         let release: Release = response
@@ -102,6 +150,41 @@ impl GitHubClient {
 /// Match an asset name against a glob-like pattern (supports * wildcard)
 pub fn matches_pattern(name: &str, pattern: &str) -> bool {
     simple_glob_match(pattern, name)
+}
+
+/// Options for filtering releases when looking for the best candidate
+pub struct ReleaseFilter<'a> {
+    pub allow_prerelease: bool,
+    pub version_pin: Option<&'a str>,
+    pub specific_version: Option<&'a str>,
+}
+
+/// Find the best matching release from a list, applying prerelease and version pin filters.
+/// Returns the first (newest) release that passes all filters.
+pub fn find_best_release<'a>(releases: &'a [Release], filter: &ReleaseFilter<'_>) -> Option<&'a Release> {
+    use crate::config::version_matches_pin;
+
+    releases.iter().find(|r| {
+        // Skip drafts always
+        if r.draft {
+            return false;
+        }
+        // Skip prereleases unless allowed
+        if r.prerelease && !filter.allow_prerelease {
+            return false;
+        }
+        // If specific version is requested, match exactly
+        if let Some(target) = filter.specific_version {
+            let tag = r.tag_name.trim_start_matches('v');
+            let target_clean = target.trim_start_matches('v');
+            return tag == target_clean || r.tag_name == target;
+        }
+        // Apply version pin constraint
+        if let Some(pin) = filter.version_pin {
+            return version_matches_pin(&r.tag_name, pin);
+        }
+        true
+    })
 }
 
 fn simple_glob_match(pattern: &str, text: &str) -> bool {
@@ -252,5 +335,159 @@ mod tests {
         let pattern_win = "*-windows-x64.msi";
         let matched_win = assets.iter().find(|a| matches_pattern(&a.name, pattern_win));
         assert!(matched_win.is_none());
+    }
+
+    // ─── find_best_release tests ─────────────────────────────────────────
+
+    fn make_release(tag: &str, prerelease: bool, draft: bool) -> Release {
+        Release {
+            tag_name: tag.to_string(),
+            name: Some(tag.to_string()),
+            prerelease,
+            draft,
+            assets: vec![],
+            html_url: format!("https://github.com/test/repo/releases/tag/{tag}"),
+        }
+    }
+
+    #[test]
+    fn test_find_best_release_stable_only() {
+        let releases = vec![
+            make_release("v2.0.0-beta.1", true, false),
+            make_release("v1.5.0", false, false),
+            make_release("v1.4.0", false, false),
+        ];
+        let filter = ReleaseFilter {
+            allow_prerelease: false,
+            version_pin: None,
+            specific_version: None,
+        };
+        let best = find_best_release(&releases, &filter).unwrap();
+        assert_eq!(best.tag_name, "v1.5.0");
+    }
+
+    #[test]
+    fn test_find_best_release_with_prerelease() {
+        let releases = vec![
+            make_release("v2.0.0-beta.1", true, false),
+            make_release("v1.5.0", false, false),
+        ];
+        let filter = ReleaseFilter {
+            allow_prerelease: true,
+            version_pin: None,
+            specific_version: None,
+        };
+        let best = find_best_release(&releases, &filter).unwrap();
+        assert_eq!(best.tag_name, "v2.0.0-beta.1");
+    }
+
+    #[test]
+    fn test_find_best_release_skips_drafts() {
+        let releases = vec![
+            make_release("v3.0.0", false, true), // draft
+            make_release("v2.0.0", false, false),
+        ];
+        let filter = ReleaseFilter {
+            allow_prerelease: true,
+            version_pin: None,
+            specific_version: None,
+        };
+        let best = find_best_release(&releases, &filter).unwrap();
+        assert_eq!(best.tag_name, "v2.0.0");
+    }
+
+    #[test]
+    fn test_find_best_release_with_version_pin() {
+        let releases = vec![
+            make_release("v2.1.0", false, false),
+            make_release("v2.0.0", false, false),
+            make_release("v1.9.0", false, false),
+            make_release("v1.5.0", false, false),
+        ];
+        let filter = ReleaseFilter {
+            allow_prerelease: false,
+            version_pin: Some("1.*"),
+            specific_version: None,
+        };
+        let best = find_best_release(&releases, &filter).unwrap();
+        assert_eq!(best.tag_name, "v1.9.0");
+    }
+
+    #[test]
+    fn test_find_best_release_with_exact_pin() {
+        let releases = vec![
+            make_release("v2.0.0", false, false),
+            make_release("v1.5.0", false, false),
+            make_release("v1.0.0", false, false),
+        ];
+        let filter = ReleaseFilter {
+            allow_prerelease: false,
+            version_pin: Some("1.5.0"),
+            specific_version: None,
+        };
+        let best = find_best_release(&releases, &filter).unwrap();
+        assert_eq!(best.tag_name, "v1.5.0");
+    }
+
+    #[test]
+    fn test_find_best_release_specific_version() {
+        let releases = vec![
+            make_release("v2.0.0", false, false),
+            make_release("v1.5.0", false, false),
+            make_release("v1.0.0", false, false),
+        ];
+        let filter = ReleaseFilter {
+            allow_prerelease: false,
+            version_pin: None,
+            specific_version: Some("v1.0.0"),
+        };
+        let best = find_best_release(&releases, &filter).unwrap();
+        assert_eq!(best.tag_name, "v1.0.0");
+    }
+
+    #[test]
+    fn test_find_best_release_specific_version_without_v() {
+        let releases = vec![
+            make_release("v2.0.0", false, false),
+            make_release("v1.5.0", false, false),
+        ];
+        let filter = ReleaseFilter {
+            allow_prerelease: false,
+            version_pin: None,
+            specific_version: Some("1.5.0"),
+        };
+        let best = find_best_release(&releases, &filter).unwrap();
+        assert_eq!(best.tag_name, "v1.5.0");
+    }
+
+    #[test]
+    fn test_find_best_release_no_match() {
+        let releases = vec![
+            make_release("v2.0.0", false, false),
+        ];
+        let filter = ReleaseFilter {
+            allow_prerelease: false,
+            version_pin: Some("1.*"),
+            specific_version: None,
+        };
+        assert!(find_best_release(&releases, &filter).is_none());
+    }
+
+    #[test]
+    fn test_find_best_release_prerelease_with_pin() {
+        let releases = vec![
+            make_release("v2.0.0-rc.1", true, false),
+            make_release("v1.9.0", false, false),
+            make_release("v1.5.0-beta.2", true, false),
+            make_release("v1.5.0-beta.1", true, false),
+        ];
+        // Allow prereleases pinned to 1.*
+        let filter = ReleaseFilter {
+            allow_prerelease: true,
+            version_pin: Some("1.*"),
+            specific_version: None,
+        };
+        let best = find_best_release(&releases, &filter).unwrap();
+        assert_eq!(best.tag_name, "v1.9.0");
     }
 }

@@ -28,6 +28,10 @@ src/
 - **Trait-based package managers**: All PMs implement `PackageManager` trait with `install()`, `installed_version()`, `name()`. Add new PMs by creating a new file and adding to the `create()` factory.
 - **Config testability**: `Config::load_from(path)` allows tests to use temp directories instead of the real config path.
 - **Auto-approve modes**: `Always` (always -y), `NoDeps` (auto-approve only when no new deps), `Never` (always prompt). Implemented via dry-run + output parsing per PM.
+- **Version pinning**: `version_pin` on TrackedApp supports exact (`1.0.24`), wildcard (`1.*`), and semver ranges (`>=2.0.0,<3.0.0`, `^1.0`, `~1.2`). Implemented via `version_matches_pin()` using `semver::VersionReq` for ranges.
+- **Prerelease handling**: `allow_prerelease` on TrackedApp (default false). When enabled (or overridden via `--prerelease` flag), uses `/releases` endpoint instead of `/releases/latest` and includes prerelease versions.
+- **Specific version install**: `--version` on update fetches by tag via `/releases/tags/{tag}`, trying both `v`-prefixed and bare versions.
+- **Release selection**: `find_best_release()` filters a list of releases by draft/prerelease/pin/specific-version. Returns first (newest) match.
 - **Integration tests use containers**: Real distro environments via podman/docker. Tests are `#[ignore]` — run with `cargo test --test container_integration -- --ignored`.
 
 ## Building and testing

@@ -75,6 +75,56 @@ galvaan add github/app --name github-copilot --asset-pattern "*-linux-arm64.rpm"
 
 # Explicit package manager override
 galvaan add github/app --name github-copilot --asset-pattern "*-linux-x64.rpm" --package-manager dnf
+
+# Track prereleases
+galvaan add owner/beta-app --asset-pattern "*.rpm" --prerelease
+
+# Pin to a major version
+galvaan add owner/stable-app --asset-pattern "*.rpm" --pin "1.*"
+```
+
+## Version pinning
+
+Pin an app to a specific version or range to control which releases are offered:
+
+```bash
+# Pin to exact version
+galvaan pin myapp 1.0.24
+
+# Pin to major version (any 1.x.x)
+galvaan pin myapp "1.*"
+
+# Pin to semver range
+galvaan pin myapp ">=2.0.0,<3.0.0"
+galvaan pin myapp "^1.0"
+galvaan pin myapp "~1.2"
+
+# Remove pin
+galvaan unpin myapp
+```
+
+Pinned apps will only be updated within the constraint. Use `galvaan list` to see active pins.
+
+## Prerelease versions
+
+By default, prerelease versions are skipped. Enable them per-app:
+
+```bash
+# When adding
+galvaan add owner/repo --asset-pattern "*.rpm" --prerelease
+
+# Override for a single check/update
+galvaan check myapp --prerelease
+galvaan update myapp --prerelease
+```
+
+## Specific version install
+
+Install a specific release version instead of latest:
+
+```bash
+galvaan update myapp --version v1.0.24
+galvaan update myapp --version 1.0.24
 ```
 
 ## Configuration
@@ -106,6 +156,13 @@ log_level = "info"
 repo = "github/app"
 asset_pattern = "*-linux-x64.rpm"
 package_manager = "zypper"
+
+[apps.beta-tool]
+repo = "owner/beta-tool"
+asset_pattern = "*.rpm"
+package_manager = "zypper"
+allow_prerelease = true
+version_pin = "1.*"
 ```
 
 ### Managing settings via CLI
@@ -178,8 +235,10 @@ To add a new distro, add a `Containerfile.<distro>` in `tests/integration/distro
 - [x] Configurable default package manager
 - [x] Shell completions (bash, zsh, fish, elvish, powershell)
 - [x] Multiple package managers (zypper, dnf, apt, pacman)
+- [x] Version pinning (exact, wildcard, semver ranges)
+- [x] Prerelease version support
+- [x] Specific version install
 - [ ] Flatpak support
 - [ ] Scheduled background update checks
 - [ ] GitHub token support for private repos / rate limits
 - [ ] Pre/post install hooks
-- [ ] Version pinning / channels (stable, beta)

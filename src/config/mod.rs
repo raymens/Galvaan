@@ -86,6 +86,11 @@ pub struct TrackedApp {
     pub installed_version: Option<String>,
     /// When the app was last checked for updates
     pub last_checked: Option<String>,
+    /// Whether to include prerelease versions
+    #[serde(default)]
+    pub allow_prerelease: bool,
+    /// Version constraint for pinning (e.g. "1.0.24", "1.*", ">=2.0.0,<3.0.0")
+    pub version_pin: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
@@ -127,6 +132,61 @@ impl std::str::FromStr for PackageManagerType {
 
 fn default_package_manager() -> PackageManagerType {
     PackageManagerType::Zypper
+}
+
+/// Parse and evaluate version constraints for pinning.
+///
+/// Supported formats:
+/// - Exact: `1.0.24` — only this version
+/// - Wildcard prefix: `1.*`, `1.0.*` — any version matching the prefix
+/// - Semver range: `>=1.0.0`, `>=1.0.0,<2.0.0`, `^1.0`, `~1.2` — standard semver ranges
+pub fn version_matches_pin(version: &str, pin: &str) -> bool {
+    let clean = version.trim_start_matches('v');
+    let clean_pin = pin.trim_start_matches('v');
+
+    // Wildcard prefix (e.g. "1.*", "1.0.*")
+    if clean_pin.contains('*') {
+        let prefix = clean_pin.trim_end_matches(".*").trim_end_matches("*");
+        let prefix = prefix.trim_end_matches('.');
+        if prefix.is_empty() {
+            return true; // "*" matches everything
+        }
+        // Version must start with the prefix followed by a dot or end
+        return clean == prefix
+            || clean.starts_with(&format!("{prefix}."));
+    }
+
+    // Semver range operators (>=, <=, >, <, ^, ~, or comma-separated)
+    if clean_pin.starts_with('>') || clean_pin.starts_with('<')
+        || clean_pin.starts_with('^') || clean_pin.starts_with('~')
+        || clean_pin.contains(',')
+    {
+        if let Ok(req) = semver::VersionReq::parse(clean_pin) {
+            // Try parsing the version, padding with .0 if needed
+            if let Some(ver) = parse_semver_loose(clean) {
+                return req.matches(&ver);
+            }
+        }
+        return false;
+    }
+
+    // Exact match
+    clean == clean_pin
+}
+
+/// Loosely parse a version string into a semver::Version, padding with .0 as needed.
+fn parse_semver_loose(s: &str) -> Option<semver::Version> {
+    let clean = s.trim_start_matches('v');
+    if let Ok(v) = semver::Version::parse(clean) {
+        return Some(v);
+    }
+    // Try padding: "1" -> "1.0.0", "1.2" -> "1.2.0"
+    let parts: Vec<&str> = clean.splitn(3, '.').collect();
+    match parts.len() {
+        1 => semver::Version::parse(&format!("{}.0.0", parts[0])).ok(),
+        2 => semver::Version::parse(&format!("{}.{}.0", parts[0], parts[1])).ok(),
+        _ => None,
+    }
 }
 
 impl Config {
@@ -212,6 +272,8 @@ mod tests {
                 package_manager: PackageManagerType::Zypper,
                 installed_version: Some("1.0.0".to_string()),
                 last_checked: None,
+                allow_prerelease: false,
+                version_pin: None,
             },
         );
         config.save().unwrap();
@@ -223,6 +285,8 @@ mod tests {
         assert_eq!(app.asset_pattern, "*.rpm");
         assert_eq!(app.package_manager, PackageManagerType::Zypper);
         assert_eq!(app.installed_version.as_deref(), Some("1.0.0"));
+        assert!(!app.allow_prerelease);
+        assert!(app.version_pin.is_none());
     }
 
     #[test]
@@ -238,6 +302,8 @@ mod tests {
                 package_manager: PackageManagerType::Zypper,
                 installed_version: None,
                 last_checked: None,
+                allow_prerelease: false,
+                version_pin: None,
             },
         );
         config.apps.insert(
@@ -248,6 +314,8 @@ mod tests {
                 package_manager: PackageManagerType::Zypper,
                 installed_version: None,
                 last_checked: None,
+                allow_prerelease: false,
+                version_pin: None,
             },
         );
         config.save().unwrap();
@@ -394,5 +462,123 @@ asset_pattern = "*.rpm"
             PackageManagerType::Zypper
         );
         assert!("unknown".parse::<PackageManagerType>().is_err());
+    }
+
+    // ─── Version pin tests ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_version_matches_pin_exact() {
+        assert!(version_matches_pin("1.0.24", "1.0.24"));
+        assert!(version_matches_pin("v1.0.24", "1.0.24"));
+        assert!(version_matches_pin("1.0.24", "v1.0.24"));
+        assert!(!version_matches_pin("1.0.25", "1.0.24"));
+        assert!(!version_matches_pin("2.0.0", "1.0.24"));
+    }
+
+    #[test]
+    fn test_version_matches_pin_wildcard() {
+        assert!(version_matches_pin("1.0.24", "1.*"));
+        assert!(version_matches_pin("1.5.0", "1.*"));
+        assert!(version_matches_pin("1.0.0", "1.0.*"));
+        assert!(version_matches_pin("1.0.99", "1.0.*"));
+        assert!(!version_matches_pin("2.0.0", "1.*"));
+        assert!(!version_matches_pin("1.1.0", "1.0.*"));
+    }
+
+    #[test]
+    fn test_version_matches_pin_wildcard_star_only() {
+        assert!(version_matches_pin("1.0.0", "*"));
+        assert!(version_matches_pin("99.99.99", "*"));
+    }
+
+    #[test]
+    fn test_version_matches_pin_semver_range() {
+        assert!(version_matches_pin("1.5.0", ">=1.0.0,<2.0.0"));
+        assert!(version_matches_pin("1.0.0", ">=1.0.0,<2.0.0"));
+        assert!(!version_matches_pin("2.0.0", ">=1.0.0,<2.0.0"));
+        assert!(!version_matches_pin("0.9.0", ">=1.0.0,<2.0.0"));
+    }
+
+    #[test]
+    fn test_version_matches_pin_caret() {
+        // ^1.0 means >=1.0.0, <2.0.0
+        assert!(version_matches_pin("1.0.0", "^1.0"));
+        assert!(version_matches_pin("1.9.9", "^1.0"));
+        assert!(!version_matches_pin("2.0.0", "^1.0"));
+    }
+
+    #[test]
+    fn test_version_matches_pin_tilde() {
+        // ~1.2 means >=1.2.0, <1.3.0
+        assert!(version_matches_pin("1.2.0", "~1.2"));
+        assert!(version_matches_pin("1.2.9", "~1.2"));
+        assert!(!version_matches_pin("1.3.0", "~1.2"));
+    }
+
+    #[test]
+    fn test_version_matches_pin_gt() {
+        assert!(version_matches_pin("2.0.0", ">=2.0.0"));
+        assert!(version_matches_pin("3.0.0", ">=2.0.0"));
+        assert!(!version_matches_pin("1.9.9", ">=2.0.0"));
+    }
+
+    #[test]
+    fn test_version_matches_pin_with_v_prefix() {
+        assert!(version_matches_pin("v1.5.0", "1.*"));
+        assert!(version_matches_pin("v1.5.0", "v1.*"));
+        assert!(version_matches_pin("v2.0.0", ">=2.0.0"));
+    }
+
+    #[test]
+    fn test_prerelease_and_pin_roundtrip() {
+        let (_dir, path) = temp_config();
+        let mut config = Config::load_from(path.clone()).unwrap();
+
+        config.apps.insert(
+            "pinned-app".to_string(),
+            TrackedApp {
+                repo: "owner/repo".to_string(),
+                asset_pattern: "*.rpm".to_string(),
+                package_manager: PackageManagerType::Zypper,
+                installed_version: Some("1.0.0".to_string()),
+                last_checked: None,
+                allow_prerelease: true,
+                version_pin: Some("1.*".to_string()),
+            },
+        );
+        config.save().unwrap();
+
+        let loaded = Config::load_from(path).unwrap();
+        let app = loaded.apps.get("pinned-app").unwrap();
+        assert!(app.allow_prerelease);
+        assert_eq!(app.version_pin.as_deref(), Some("1.*"));
+    }
+
+    #[test]
+    fn test_prerelease_defaults_to_false() {
+        let toml_str = r#"
+[apps.myapp]
+repo = "owner/repo"
+asset_pattern = "*.rpm"
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let app = config.apps.get("myapp").unwrap();
+        assert!(!app.allow_prerelease);
+        assert!(app.version_pin.is_none());
+    }
+
+    #[test]
+    fn test_prerelease_from_toml() {
+        let toml_str = r#"
+[apps.beta-app]
+repo = "owner/repo"
+asset_pattern = "*.rpm"
+allow_prerelease = true
+version_pin = ">=2.0.0-beta"
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let app = config.apps.get("beta-app").unwrap();
+        assert!(app.allow_prerelease);
+        assert_eq!(app.version_pin.as_deref(), Some(">=2.0.0-beta"));
     }
 }
