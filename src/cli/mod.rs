@@ -27,9 +27,9 @@ pub enum Commands {
         /// Friendly name for this app
         #[arg(short, long)]
         name: Option<String>,
-        /// Glob pattern to match release assets (e.g. "*.x86_64.rpm")
+        /// Glob pattern to match release assets (auto-detected if omitted)
         #[arg(short, long)]
-        asset_pattern: String,
+        asset_pattern: Option<String>,
         /// Package manager to use (overrides default_package_manager from config)
         #[arg(short, long)]
         package_manager: Option<String>,

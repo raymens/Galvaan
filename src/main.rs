@@ -82,10 +82,30 @@ pub fn parse_auto_approve(s: &str) -> Result<AutoApprove> {
     }
 }
 
+/// Auto-detect an asset pattern based on the package manager and system architecture.
+fn detect_asset_pattern(pm: &PackageManagerType) -> String {
+    let arch = std::env::consts::ARCH;
+    let arch_patterns: &[&str] = match arch {
+        "x86_64" => &["x86_64", "x64", "amd64"],
+        "aarch64" => &["aarch64", "arm64"],
+        other => &[other],
+    };
+
+    let extension = match pm {
+        PackageManagerType::Zypper | PackageManagerType::Dnf => ".rpm",
+        PackageManagerType::Apt => ".deb",
+        PackageManagerType::Pacman => ".pkg.tar.zst",
+    };
+
+    // Build a pattern like "*{linux}*{arch}*{ext}" — use the first arch variant
+    let arch_str = arch_patterns[0];
+    format!("*linux*{arch_str}*{extension}")
+}
+
 fn cmd_add(
     repo: String,
     name: Option<String>,
-    asset_pattern: String,
+    asset_pattern: Option<String>,
     pm: Option<String>,
     allow_prerelease: bool,
     version_pin: Option<String>,
@@ -100,6 +120,11 @@ fn cmd_add(
         None => config.settings.default_package_manager.clone(),
     };
 
+    let pattern = match asset_pattern {
+        Some(p) => p,
+        None => detect_asset_pattern(&pm_type),
+    };
+
     // Validate pin constraint if provided
     if let Some(ref pin) = version_pin {
         validate_version_pin(pin)?;
@@ -107,7 +132,7 @@ fn cmd_add(
 
     let app = TrackedApp {
         repo: repo.clone(),
-        asset_pattern,
+        asset_pattern: pattern.clone(),
         package_manager: pm_type,
         installed_version: None,
         last_checked: None,
@@ -121,6 +146,7 @@ fn cmd_add(
 
     info!(app = %app_name, repo = %repo, "Added tracked app");
     let mut msg = format!("✓ Added '{app_name}' (tracking {repo})");
+    msg.push_str(&format!(" [pattern: {pattern}]"));
     if allow_prerelease {
         msg.push_str(" [prereleases enabled]");
     }
@@ -608,7 +634,7 @@ mod tests {
             } => {
                 assert_eq!(repo, "github/app");
                 assert_eq!(name.as_deref(), Some("copilot"));
-                assert_eq!(asset_pattern, "*-linux-x64.rpm");
+                assert_eq!(asset_pattern.as_deref(), Some("*-linux-x64.rpm"));
                 assert!(package_manager.is_none());
                 assert!(!prerelease);
                 assert!(pin.is_none());
@@ -660,6 +686,38 @@ mod tests {
             }
             _ => panic!("Expected Add command"),
         }
+    }
+
+    #[test]
+    fn test_cli_parse_add_without_asset_pattern() {
+        let cli = Cli::parse_from(["galvaan", "add", "owner/repo"]);
+        match cli.command {
+            Commands::Add { asset_pattern, .. } => {
+                assert!(asset_pattern.is_none());
+            }
+            _ => panic!("Expected Add command"),
+        }
+    }
+
+    #[test]
+    fn test_detect_asset_pattern_rpm() {
+        let pattern = detect_asset_pattern(&PackageManagerType::Zypper);
+        assert!(pattern.contains(".rpm"));
+        assert!(pattern.contains("linux"));
+    }
+
+    #[test]
+    fn test_detect_asset_pattern_deb() {
+        let pattern = detect_asset_pattern(&PackageManagerType::Apt);
+        assert!(pattern.contains(".deb"));
+        assert!(pattern.contains("linux"));
+    }
+
+    #[test]
+    fn test_detect_asset_pattern_pacman() {
+        let pattern = detect_asset_pattern(&PackageManagerType::Pacman);
+        assert!(pattern.contains(".pkg.tar.zst"));
+        assert!(pattern.contains("linux"));
     }
 
     #[test]
