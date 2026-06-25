@@ -127,6 +127,21 @@ galvaan update myapp --version v1.0.24
 galvaan update myapp --version 1.0.24
 ```
 
+## Keeping galvaan itself up to date
+
+Galvaan can track its own releases just like any other app:
+
+```bash
+# RPM-based (openSUSE, Fedora)
+galvaan add raymens/Galvaan --name galvaan --asset-pattern "*.rpm"
+
+# DEB-based (Debian, Ubuntu)
+galvaan add raymens/Galvaan --name galvaan --asset-pattern "*.deb"
+
+# Then update as usual
+galvaan update galvaan
+```
+
 ## Configuration
 
 Config is stored at `~/.config/galvaan/config.toml`. Use `galvaan config path` to show the exact location.

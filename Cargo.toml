@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2024"
 description = "Keep apps up to date based on GitHub releases"
 license = "MIT"
+authors = ["raymens"]
+repository = "https://github.com/raymens/Galvaan"
+homepage = "https://github.com/raymens/Galvaan"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
@@ -25,3 +28,19 @@ tracing-appender = "0.2"
 
 [dev-dependencies]
 serde_json = "1"
+
+# cargo-deb metadata
+[package.metadata.deb]
+maintainer = "raymens"
+section = "utils"
+priority = "optional"
+assets = [
+    ["target/release/galvaan", "usr/bin/", "755"],
+]
+extended-description = "CLI tool that tracks GitHub releases and automatically updates desktop apps on Linux. Supports zypper, dnf, apt, and pacman."
+
+# cargo-generate-rpm metadata
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/galvaan", dest = "/usr/bin/galvaan", mode = "0755" },
+]
