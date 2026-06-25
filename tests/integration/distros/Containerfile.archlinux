@@ -1,0 +1,16 @@
+FROM archlinux:latest
+
+RUN pacman -Syu --noconfirm && \
+    pacman -S --noconfirm --needed \
+        sudo curl which && \
+    pacman -Scc --noconfirm
+
+RUN useradd -m -s /bin/bash testuser && \
+    echo "testuser ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+
+ARG BINARY=galvaan
+COPY ${BINARY} /usr/local/bin/galvaan
+RUN chmod +x /usr/local/bin/galvaan
+
+USER testuser
+WORKDIR /home/testuser

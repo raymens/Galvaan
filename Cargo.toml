@@ -1,0 +1,27 @@
+[package]
+name = "galvaan"
+version = "0.1.0"
+edition = "2024"
+description = "Keep apps up to date based on GitHub releases"
+license = "MIT"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream"], default-features = false }
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+dirs = "6"
+semver = { version = "1", features = ["serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+tempfile = "3"
+indicatif = "0.17"
+futures-util = "0.3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-appender = "0.2"
+
+[dev-dependencies]
+serde_json = "1"

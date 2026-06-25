@@ -1,0 +1,15 @@
+FROM fedora:latest
+
+RUN dnf install -y --setopt=install_weak_deps=False \
+        rpm sudo curl which && \
+    dnf clean all
+
+RUN useradd -m -s /bin/bash testuser && \
+    echo "testuser ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+
+ARG BINARY=galvaan
+COPY ${BINARY} /usr/local/bin/galvaan
+RUN chmod +x /usr/local/bin/galvaan
+
+USER testuser
+WORKDIR /home/testuser

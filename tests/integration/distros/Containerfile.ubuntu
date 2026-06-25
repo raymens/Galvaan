@@ -1,0 +1,19 @@
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        sudo curl ca-certificates && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN useradd -m -s /bin/bash testuser && \
+    echo "testuser ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+
+ARG BINARY=galvaan
+COPY ${BINARY} /usr/local/bin/galvaan
+RUN chmod +x /usr/local/bin/galvaan
+
+USER testuser
+WORKDIR /home/testuser

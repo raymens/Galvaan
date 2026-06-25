@@ -1,0 +1,17 @@
+FROM opensuse/tumbleweed:latest
+
+RUN zypper --non-interactive refresh && \
+    zypper --non-interactive install --no-recommends \
+        rpm sudo curl which && \
+    zypper clean --all
+
+# Create a non-root user with passwordless sudo for realistic testing
+RUN useradd -m -s /bin/bash testuser && \
+    echo "testuser ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+
+ARG BINARY=galvaan
+COPY ${BINARY} /usr/local/bin/galvaan
+RUN chmod +x /usr/local/bin/galvaan
+
+USER testuser
+WORKDIR /home/testuser
