@@ -20,9 +20,9 @@ impl Apt {
         debug!("Dry-run output:\n{stdout}");
 
         // apt lists "The following additional packages will be installed:" when deps are needed
-        let has_new_deps = stdout.lines().any(|line| {
-            line.contains("additional packages will be installed")
-        });
+        let has_new_deps = stdout
+            .lines()
+            .any(|line| line.contains("additional packages will be installed"));
 
         Ok(!has_new_deps)
     }
@@ -105,7 +105,10 @@ impl PackageManager for Apt {
                     eprintln!("{stderr}");
                 }
             }
-            anyhow::bail!("apt install failed with exit code: {:?}", child.status.code());
+            anyhow::bail!(
+                "apt install failed with exit code: {:?}",
+                child.status.code()
+            );
         }
 
         info!("Installation complete");

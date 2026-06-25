@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::config::Config;
 
@@ -9,9 +9,7 @@ pub fn init(config: &Config) -> Result<Option<tracing_appender::non_blocking::Wo
     match &config.settings.log_file {
         Some(log_path) => {
             let path = std::path::Path::new(log_path);
-            let parent = path
-                .parent()
-                .context("Invalid log file path")?;
+            let parent = path.parent().context("Invalid log file path")?;
             std::fs::create_dir_all(parent)?;
 
             let file = std::fs::OpenOptions::new()
@@ -22,8 +20,7 @@ pub fn init(config: &Config) -> Result<Option<tracing_appender::non_blocking::Wo
 
             let (non_blocking, guard) = tracing_appender::non_blocking(file);
 
-            let filter = EnvFilter::try_new(log_level)
-                .unwrap_or_else(|_| EnvFilter::new("info"));
+            let filter = EnvFilter::try_new(log_level).unwrap_or_else(|_| EnvFilter::new("info"));
 
             tracing_subscriber::registry()
                 .with(filter)

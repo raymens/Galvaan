@@ -22,7 +22,8 @@ impl Dnf {
         // dnf lists "Installing dependencies:" when new deps are needed
         let has_new_deps = stdout.lines().any(|line| {
             let line = line.trim();
-            line.contains("Installing dependencies") || line.contains("Installing weak dependencies")
+            line.contains("Installing dependencies")
+                || line.contains("Installing weak dependencies")
         });
 
         Ok(!has_new_deps)
@@ -98,7 +99,10 @@ impl PackageManager for Dnf {
                     eprintln!("{stderr}");
                 }
             }
-            anyhow::bail!("dnf install failed with exit code: {:?}", child.status.code());
+            anyhow::bail!(
+                "dnf install failed with exit code: {:?}",
+                child.status.code()
+            );
         }
 
         info!("Installation complete");

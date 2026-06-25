@@ -110,7 +110,10 @@ impl PackageManager for Zypper {
                     eprintln!("{stderr}");
                 }
             }
-            anyhow::bail!("zypper install failed with exit code: {:?}", child.status.code());
+            anyhow::bail!(
+                "zypper install failed with exit code: {:?}",
+                child.status.code()
+            );
         }
 
         info!("Installation complete");

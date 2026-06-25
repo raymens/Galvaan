@@ -69,7 +69,10 @@ impl PackageManager for Pacman {
                     eprintln!("{stderr}");
                 }
             }
-            anyhow::bail!("pacman install failed with exit code: {:?}", child.status.code());
+            anyhow::bail!(
+                "pacman install failed with exit code: {:?}",
+                child.status.code()
+            );
         }
 
         info!("Installation complete");
@@ -89,11 +92,7 @@ impl PackageManager for Pacman {
         if output.status.success() {
             // pacman -Q outputs "package_name version"
             let stdout = String::from_utf8_lossy(&output.stdout);
-            let version = stdout
-                .split_whitespace()
-                .nth(1)
-                .unwrap_or("")
-                .to_string();
+            let version = stdout.split_whitespace().nth(1).unwrap_or("").to_string();
             debug!("Installed version: {version}");
             Ok(Some(version))
         } else {

@@ -57,9 +57,7 @@ impl GitHubClient {
 
     /// Fetch recent releases (up to 100) for a repo, including prereleases
     pub async fn get_releases(&self, repo: &str, per_page: u32) -> Result<Vec<Release>> {
-        let url = format!(
-            "https://api.github.com/repos/{repo}/releases?per_page={per_page}"
-        );
+        let url = format!("https://api.github.com/repos/{repo}/releases?per_page={per_page}");
         let response = self
             .client
             .get(&url)
@@ -104,7 +102,12 @@ impl GitHubClient {
     }
 
     /// Download an asset with a progress bar
-    pub async fn download_asset(&self, url: &str, dest: &std::path::Path, total_size: u64) -> Result<()> {
+    pub async fn download_asset(
+        &self,
+        url: &str,
+        dest: &std::path::Path,
+        total_size: u64,
+    ) -> Result<()> {
         use futures_util::StreamExt;
         use indicatif::{ProgressBar, ProgressStyle};
         use tokio::io::AsyncWriteExt;
@@ -161,7 +164,10 @@ pub struct ReleaseFilter<'a> {
 
 /// Find the best matching release from a list, applying prerelease and version pin filters.
 /// Returns the first (newest) release that passes all filters.
-pub fn find_best_release<'a>(releases: &'a [Release], filter: &ReleaseFilter<'_>) -> Option<&'a Release> {
+pub fn find_best_release<'a>(
+    releases: &'a [Release],
+    filter: &ReleaseFilter<'_>,
+) -> Option<&'a Release> {
     use crate::config::version_matches_pin;
 
     releases.iter().find(|r| {
@@ -223,16 +229,31 @@ mod tests {
     #[test]
     fn test_glob_matching_rpm() {
         assert!(matches_pattern("GitHub-Copilot-linux-x64.rpm", "*.rpm"));
-        assert!(matches_pattern("GitHub-Copilot-linux-x64.rpm", "GitHub-Copilot-linux-x64.rpm"));
-        assert!(matches_pattern("GitHub-Copilot-linux-x64.rpm", "GitHub-Copilot-*.rpm"));
-        assert!(matches_pattern("GitHub-Copilot-linux-x64.rpm", "*-linux-x64.rpm"));
+        assert!(matches_pattern(
+            "GitHub-Copilot-linux-x64.rpm",
+            "GitHub-Copilot-linux-x64.rpm"
+        ));
+        assert!(matches_pattern(
+            "GitHub-Copilot-linux-x64.rpm",
+            "GitHub-Copilot-*.rpm"
+        ));
+        assert!(matches_pattern(
+            "GitHub-Copilot-linux-x64.rpm",
+            "*-linux-x64.rpm"
+        ));
     }
 
     #[test]
     fn test_glob_matching_arch_filter() {
         assert!(matches_pattern("GitHub-Copilot-linux-x64.rpm", "*-x64.rpm"));
-        assert!(!matches_pattern("GitHub-Copilot-linux-arm64.rpm", "*-x64.rpm"));
-        assert!(matches_pattern("GitHub-Copilot-linux-arm64.rpm", "*-arm64.rpm"));
+        assert!(!matches_pattern(
+            "GitHub-Copilot-linux-arm64.rpm",
+            "*-x64.rpm"
+        ));
+        assert!(matches_pattern(
+            "GitHub-Copilot-linux-arm64.rpm",
+            "*-arm64.rpm"
+        ));
     }
 
     #[test]
@@ -240,7 +261,10 @@ mod tests {
         assert!(matches_pattern("GitHub-Copilot-linux-x64.rpm", "*.rpm"));
         assert!(!matches_pattern("GitHub-Copilot-linux-x64.deb", "*.rpm"));
         assert!(matches_pattern("GitHub-Copilot-linux-x64.deb", "*.deb"));
-        assert!(!matches_pattern("GitHub-Copilot-linux-x64.AppImage", "*.rpm"));
+        assert!(!matches_pattern(
+            "GitHub-Copilot-linux-x64.AppImage",
+            "*.rpm"
+        ));
     }
 
     #[test]
@@ -251,8 +275,14 @@ mod tests {
 
     #[test]
     fn test_glob_multiple_wildcards() {
-        assert!(matches_pattern("GitHub-Copilot-linux-x64.rpm", "*Copilot*x64*"));
-        assert!(!matches_pattern("GitHub-Copilot-linux-arm64.rpm", "*Copilot*x64*"));
+        assert!(matches_pattern(
+            "GitHub-Copilot-linux-x64.rpm",
+            "*Copilot*x64*"
+        ));
+        assert!(!matches_pattern(
+            "GitHub-Copilot-linux-arm64.rpm",
+            "*Copilot*x64*"
+        ));
     }
 
     #[test]
@@ -328,12 +358,16 @@ mod tests {
         assert_eq!(matched.unwrap().name, "GitHub-Copilot-linux-x64.rpm");
 
         let pattern_deb = "*-linux-x64.deb";
-        let matched_deb = assets.iter().find(|a| matches_pattern(&a.name, pattern_deb));
+        let matched_deb = assets
+            .iter()
+            .find(|a| matches_pattern(&a.name, pattern_deb));
         assert!(matched_deb.is_some());
         assert_eq!(matched_deb.unwrap().name, "GitHub-Copilot-linux-x64.deb");
 
         let pattern_win = "*-windows-x64.msi";
-        let matched_win = assets.iter().find(|a| matches_pattern(&a.name, pattern_win));
+        let matched_win = assets
+            .iter()
+            .find(|a| matches_pattern(&a.name, pattern_win));
         assert!(matched_win.is_none());
     }
 
@@ -462,9 +496,7 @@ mod tests {
 
     #[test]
     fn test_find_best_release_no_match() {
-        let releases = vec![
-            make_release("v2.0.0", false, false),
-        ];
+        let releases = vec![make_release("v2.0.0", false, false)];
         let filter = ReleaseFilter {
             allow_prerelease: false,
             version_pin: Some("1.*"),

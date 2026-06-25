@@ -152,13 +152,14 @@ pub fn version_matches_pin(version: &str, pin: &str) -> bool {
             return true; // "*" matches everything
         }
         // Version must start with the prefix followed by a dot or end
-        return clean == prefix
-            || clean.starts_with(&format!("{prefix}."));
+        return clean == prefix || clean.starts_with(&format!("{prefix}."));
     }
 
     // Semver range operators (>=, <=, >, <, ^, ~, or comma-separated)
-    if clean_pin.starts_with('>') || clean_pin.starts_with('<')
-        || clean_pin.starts_with('^') || clean_pin.starts_with('~')
+    if clean_pin.starts_with('>')
+        || clean_pin.starts_with('<')
+        || clean_pin.starts_with('^')
+        || clean_pin.starts_with('~')
         || clean_pin.contains(',')
     {
         if let Ok(req) = semver::VersionReq::parse(clean_pin) {
@@ -370,7 +371,10 @@ asset_pattern = "*.rpm"
     fn test_default_settings() {
         let config = Config::default();
         assert_eq!(config.settings.auto_approve, AutoApprove::NoDeps);
-        assert_eq!(config.settings.default_package_manager, PackageManagerType::Zypper);
+        assert_eq!(
+            config.settings.default_package_manager,
+            PackageManagerType::Zypper
+        );
         assert!(!config.settings.quiet_package_manager);
         assert!(config.settings.log_file.is_none());
         assert_eq!(config.settings.log_level, "info");
@@ -390,7 +394,10 @@ asset_pattern = "*.rpm"
         let loaded = Config::load_from(path).unwrap();
         assert_eq!(loaded.settings.auto_approve, AutoApprove::Always);
         assert!(loaded.settings.quiet_package_manager);
-        assert_eq!(loaded.settings.log_file.as_deref(), Some("/tmp/galvaan.log"));
+        assert_eq!(
+            loaded.settings.log_file.as_deref(),
+            Some("/tmp/galvaan.log")
+        );
         assert_eq!(loaded.settings.log_level, "debug");
     }
 
@@ -410,9 +417,15 @@ asset_pattern = "*.rpm"
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         assert_eq!(config.settings.auto_approve, AutoApprove::Always);
-        assert_eq!(config.settings.default_package_manager, PackageManagerType::Zypper);
+        assert_eq!(
+            config.settings.default_package_manager,
+            PackageManagerType::Zypper
+        );
         assert!(config.settings.quiet_package_manager);
-        assert_eq!(config.settings.log_file.as_deref(), Some("/var/log/galvaan.log"));
+        assert_eq!(
+            config.settings.log_file.as_deref(),
+            Some("/var/log/galvaan.log")
+        );
         assert_eq!(config.settings.log_level, "trace");
     }
 
@@ -428,9 +441,7 @@ asset_pattern = "*.rpm"
             (AutoApprove::NoDeps, "no_deps"),
             (AutoApprove::Never, "never"),
         ] {
-            let toml_str = format!(
-                "[settings]\nauto_approve = \"{label}\"\n[apps]\n"
-            );
+            let toml_str = format!("[settings]\nauto_approve = \"{label}\"\n[apps]\n");
             let config: Config = toml::from_str(&toml_str).unwrap();
             assert_eq!(config.settings.auto_approve, variant);
         }
@@ -445,7 +456,10 @@ asset_pattern = "*.rpm"
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         assert_eq!(config.settings.auto_approve, AutoApprove::NoDeps);
-        assert_eq!(config.settings.default_package_manager, PackageManagerType::Zypper);
+        assert_eq!(
+            config.settings.default_package_manager,
+            PackageManagerType::Zypper
+        );
         assert!(!config.settings.quiet_package_manager);
         assert!(config.settings.log_file.is_none());
         assert_eq!(config.settings.log_level, "info");

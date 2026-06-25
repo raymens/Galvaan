@@ -21,7 +21,11 @@ use std::process::{Command, Output};
 fn container_runtime() -> &'static str {
     // Prefer podman — it's rootless and standard on openSUSE
     for rt in &["podman", "docker"] {
-        if Command::new(rt).arg("--version").output().is_ok_and(|o| o.status.success()) {
+        if Command::new(rt)
+            .arg("--version")
+            .output()
+            .is_ok_and(|o| o.status.success())
+        {
             return rt;
         }
     }
@@ -117,7 +121,8 @@ impl DistroTest {
             .args([
                 "run",
                 "--rm",
-                "--security-opt", "label=disable",
+                "--security-opt",
+                "label=disable",
                 "-e",
                 &format!("GALVAAN_TEST_PM={}", self.package_manager),
                 "-v",
