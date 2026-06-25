@@ -334,7 +334,8 @@ mod tests {
 
     #[test]
     fn test_find_matching_asset_in_release() {
-        let assets = [Asset {
+        let assets = [
+            Asset {
                 name: "GitHub-Copilot-darwin-arm64.dmg".to_string(),
                 browser_download_url: "https://example.com/mac.dmg".to_string(),
                 size: 100,
@@ -351,7 +352,8 @@ mod tests {
                 browser_download_url: "https://example.com/linux.deb".to_string(),
                 size: 200,
                 content_type: "application/vnd.debian.binary-package".to_string(),
-            }];
+            },
+        ];
 
         let pattern = "*-linux-x64.rpm";
         let matched = assets.iter().find(|a| matches_pattern(&a.name, pattern));
