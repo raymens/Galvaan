@@ -91,6 +91,9 @@ pub struct TrackedApp {
     pub allow_prerelease: bool,
     /// Version constraint for pinning (e.g. "1.0.24", "1.*", ">=2.0.0,<3.0.0")
     pub version_pin: Option<String>,
+    /// Skip package signature verification (for unsigned packages)
+    #[serde(default)]
+    pub allow_unsigned: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
@@ -275,6 +278,7 @@ mod tests {
                 last_checked: None,
                 allow_prerelease: false,
                 version_pin: None,
+                allow_unsigned: false,
             },
         );
         config.save().unwrap();
@@ -305,6 +309,7 @@ mod tests {
                 last_checked: None,
                 allow_prerelease: false,
                 version_pin: None,
+                allow_unsigned: false,
             },
         );
         config.apps.insert(
@@ -317,6 +322,7 @@ mod tests {
                 last_checked: None,
                 allow_prerelease: false,
                 version_pin: None,
+                allow_unsigned: false,
             },
         );
         config.save().unwrap();
@@ -558,6 +564,7 @@ asset_pattern = "*.rpm"
                 last_checked: None,
                 allow_prerelease: true,
                 version_pin: Some("1.*".to_string()),
+                allow_unsigned: false,
             },
         );
         config.save().unwrap();

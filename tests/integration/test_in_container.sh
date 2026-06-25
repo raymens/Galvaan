@@ -189,6 +189,24 @@ run_test "list shows both flags" \
 galvaan remove pre-app >/dev/null 2>&1
 galvaan remove combo-app >/dev/null 2>&1
 
+# ─── Allow unsigned ───────────────────────────────────────────────────────────
+
+echo "=== Allow unsigned ==="
+
+run_test "add with --allow-unsigned" \
+    assert_exit_0 galvaan add owner/unsigned-repo --name unsigned-app \
+        --asset-pattern "*.rpm" --allow-unsigned
+
+run_test "unsigned not in list by default" \
+    assert_exit_nonzero assert_output_contains "allow_unsigned" galvaan list
+
+run_test "add without --allow-unsigned" \
+    assert_exit_0 galvaan add owner/signed-repo --name signed-app \
+        --asset-pattern "*.rpm"
+
+galvaan remove unsigned-app >/dev/null 2>&1
+galvaan remove signed-app >/dev/null 2>&1
+
 # ─── Package manager detection ────────────────────────────────────────────────
 
 echo "=== Package manager ($PM) ==="

@@ -11,17 +11,16 @@ pub struct Zypper;
 impl Zypper {
     /// Dry-run install to check whether new dependencies would be pulled in.
     /// Returns true if only the target package is affected (no extra deps).
-    fn is_deps_only_update(&self, package_path: &str) -> Result<bool> {
+    fn is_deps_only_update(&self, package_path: &str, allow_unsigned: bool) -> Result<bool> {
         debug!("Running zypper dry-run to check for dependency changes");
+        let mut args = vec!["zypper", "install", "--dry-run", "-y"];
+        if allow_unsigned {
+            args.push("--allow-unsigned-rpm");
+        }
+        args.push(package_path);
+
         let output = Command::new("sudo")
-            .args([
-                "zypper",
-                "install",
-                "--dry-run",
-                "--allow-unsigned-rpm",
-                "-y",
-                package_path,
-            ])
+            .args(&args)
             .output()
             .context("Failed to execute zypper dry-run")?;
 
@@ -54,7 +53,7 @@ impl PackageManager for Zypper {
                 true
             }
             AutoApprove::NoDeps => {
-                let no_new_deps = self.is_deps_only_update(path_str)?;
+                let no_new_deps = self.is_deps_only_update(path_str, options.allow_unsigned)?;
                 if no_new_deps {
                     debug!("Auto-approve: no new dependencies detected — using -y");
                     println!("  No new dependencies — auto-approving.");
@@ -71,7 +70,10 @@ impl PackageManager for Zypper {
             }
         };
 
-        let mut args = vec!["zypper", "install", "--allow-unsigned-rpm"];
+        let mut args = vec!["zypper", "install"];
+        if options.allow_unsigned {
+            args.push("--allow-unsigned-rpm");
+        }
         if auto_yes {
             args.push("-y");
         }

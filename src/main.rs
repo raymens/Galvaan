@@ -32,6 +32,7 @@ async fn main() -> Result<()> {
             None => config.settings.auto_approve.clone(),
         },
         quiet: cli.quiet || config.settings.quiet_package_manager,
+        allow_unsigned: false, // overridden per-app in cmd_update
     };
 
     match cli.command {
@@ -42,7 +43,16 @@ async fn main() -> Result<()> {
             package_manager,
             prerelease,
             pin,
-        } => cmd_add(repo, name, asset_pattern, package_manager, prerelease, pin)?,
+            allow_unsigned,
+        } => cmd_add(
+            repo,
+            name,
+            asset_pattern,
+            package_manager,
+            prerelease,
+            pin,
+            allow_unsigned,
+        )?,
         Commands::Remove { name } => cmd_remove(name)?,
         Commands::List => cmd_list()?,
         Commands::Check { name, prerelease } => cmd_check(name, prerelease).await?,
@@ -79,6 +89,7 @@ fn cmd_add(
     pm: Option<String>,
     allow_prerelease: bool,
     version_pin: Option<String>,
+    allow_unsigned: bool,
 ) -> Result<()> {
     let mut config = Config::load()?;
 
@@ -102,6 +113,7 @@ fn cmd_add(
         last_checked: None,
         allow_prerelease,
         version_pin: version_pin.clone(),
+        allow_unsigned,
     };
 
     config.apps.insert(app_name.clone(), app);
@@ -462,7 +474,9 @@ async fn cmd_update(
 
         // Install via package manager
         let pm = package_manager::create(&app.package_manager);
-        pm.install(&download_path, install_opts)?;
+        let mut app_install_opts = install_opts.clone();
+        app_install_opts.allow_unsigned = app.allow_unsigned;
+        pm.install(&download_path, &app_install_opts)?;
 
         // Update config with new version
         if let Some(tracked) = config.apps.get_mut(app_name) {
@@ -590,6 +604,7 @@ mod tests {
                 package_manager,
                 prerelease,
                 pin,
+                allow_unsigned,
             } => {
                 assert_eq!(repo, "github/app");
                 assert_eq!(name.as_deref(), Some("copilot"));
@@ -597,6 +612,7 @@ mod tests {
                 assert!(package_manager.is_none());
                 assert!(!prerelease);
                 assert!(pin.is_none());
+                assert!(!allow_unsigned);
             }
             _ => panic!("Expected Add command"),
         }
@@ -821,9 +837,11 @@ mod tests {
         let opts = InstallOptions {
             auto_approve: config.settings.auto_approve.clone(),
             quiet: config.settings.quiet_package_manager,
+            allow_unsigned: false,
         };
         assert_eq!(opts.auto_approve, AutoApprove::NoDeps);
         assert!(!opts.quiet);
+        assert!(!opts.allow_unsigned);
     }
 
     #[test]
@@ -834,6 +852,7 @@ mod tests {
         let opts = InstallOptions {
             auto_approve,
             quiet: true || config.settings.quiet_package_manager,
+            allow_unsigned: false,
         };
         assert_eq!(opts.auto_approve, AutoApprove::Always);
         assert!(opts.quiet);

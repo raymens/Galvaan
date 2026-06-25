@@ -39,6 +39,9 @@ pub enum Commands {
         /// Pin to a version constraint (e.g. "1.0.24", "1.*", ">=2.0.0,<3.0.0")
         #[arg(long)]
         pin: Option<String>,
+        /// Skip package signature verification (for unsigned packages)
+        #[arg(long)]
+        allow_unsigned: bool,
     },
 
     /// Remove a tracked app

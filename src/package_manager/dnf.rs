@@ -62,6 +62,9 @@ impl PackageManager for Dnf {
         };
 
         let mut args = vec!["dnf", "install"];
+        if options.allow_unsigned {
+            args.push("--nogpgcheck");
+        }
         if auto_yes {
             args.push("-y");
         }
