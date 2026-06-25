@@ -82,7 +82,7 @@ fn cmd_add(
 
     let app_name = name.unwrap_or_else(|| {
         repo.split('/')
-            .last()
+            .next_back()
             .unwrap_or(&repo)
             .to_string()
     });
@@ -168,11 +168,10 @@ fn validate_version_pin(pin: &str) -> Result<()> {
     use config::version_matches_pin;
     // Try matching against a dummy version to ensure the pin is syntactically valid
     // Wildcard and exact pins always work; semver ranges may fail to parse
-    if pin.starts_with('>') || pin.starts_with('<') || pin.starts_with('^') || pin.starts_with('~') || pin.contains(',') {
-        if semver::VersionReq::parse(pin.trim_start_matches('v')).is_err() {
+    if (pin.starts_with('>') || pin.starts_with('<') || pin.starts_with('^') || pin.starts_with('~') || pin.contains(','))
+        && semver::VersionReq::parse(pin.trim_start_matches('v')).is_err() {
             anyhow::bail!("Invalid version constraint: '{pin}'. Examples: '1.0.24', '1.*', '>=2.0.0,<3.0.0', '^1.0'");
         }
-    }
     // Quick sanity check — a pin like "" is invalid
     if pin.is_empty() {
         anyhow::bail!("Version pin cannot be empty");
@@ -190,7 +189,7 @@ fn cmd_list() -> Result<()> {
         return Ok(());
     }
 
-    println!("{:<20} {:<30} {:<15} {:<10} {}", "NAME", "REPO", "VERSION", "PKG MGR", "FLAGS");
+    println!("{:<20} {:<30} {:<15} {:<10} FLAGS", "NAME", "REPO", "VERSION", "PKG MGR");
     println!("{}", "-".repeat(95));
 
     for (name, app) in &config.apps {

@@ -90,7 +90,6 @@ impl PackageManager for Pacman {
             // pacman -Q outputs "package_name version"
             let stdout = String::from_utf8_lossy(&output.stdout);
             let version = stdout
-                .trim()
                 .split_whitespace()
                 .nth(1)
                 .unwrap_or("")
