@@ -40,7 +40,7 @@ pub enum Commands {
         #[arg(long)]
         pin: Option<String>,
         /// Skip package signature/checksum verification (for unsigned packages)
-        #[arg(long, alias = "ignore-checksums")]
+        #[arg(long, aliases = ["ignore-checksums", "allow-unsigned-rpm"])]
         allow_unsigned: bool,
     },
 

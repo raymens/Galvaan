@@ -730,6 +730,22 @@ mod tests {
     }
 
     #[test]
+    fn test_cli_parse_add_with_allow_unsigned_rpm_alias() {
+        let cli = Cli::parse_from([
+            "galvaan",
+            "add",
+            "owner/repo",
+            "--asset-pattern",
+            "*.rpm",
+            "--allow-unsigned-rpm",
+        ]);
+        match cli.command {
+            Commands::Add { allow_unsigned, .. } => assert!(allow_unsigned),
+            _ => panic!("Expected Add command"),
+        }
+    }
+
+    #[test]
     fn test_cli_parse_ignore_checksums() {
         let cli = Cli::parse_from(["galvaan", "ignore-checksums", "copilot"]);
         match cli.command {
