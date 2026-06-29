@@ -39,8 +39,8 @@ pub enum Commands {
         /// Pin to a version constraint (e.g. "1.0.24", "1.*", ">=2.0.0,<3.0.0")
         #[arg(long)]
         pin: Option<String>,
-        /// Skip package signature verification (for unsigned packages)
-        #[arg(long)]
+        /// Skip package signature/checksum verification (for unsigned packages)
+        #[arg(long, alias = "ignore-checksums")]
         allow_unsigned: bool,
     },
 
@@ -85,6 +85,20 @@ pub enum Commands {
     /// Remove version pin from an app
     Unpin {
         /// Name of the app to unpin
+        name: String,
+    },
+
+    /// Disable checksum/signature verification for an app (for unsigned packages)
+    #[command(name = "ignore-checksums")]
+    IgnoreChecksums {
+        /// Name of the app
+        name: String,
+    },
+
+    /// Re-enable checksum/signature verification for an app
+    #[command(name = "verify-checksums")]
+    VerifyChecksums {
+        /// Name of the app
         name: String,
     },
 

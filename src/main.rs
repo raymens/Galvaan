@@ -63,6 +63,8 @@ async fn main() -> Result<()> {
         } => cmd_update(name, &install_opts, version, prerelease).await?,
         Commands::Pin { name, constraint } => cmd_pin(name, constraint)?,
         Commands::Unpin { name } => cmd_unpin(name)?,
+        Commands::IgnoreChecksums { name } => cmd_ignore_checksums(name)?,
+        Commands::VerifyChecksums { name } => cmd_verify_checksums(name)?,
         Commands::Config { action } => cmd_config(action)?,
         Commands::Completions { shell } => cli::generate_completions(shell),
     }
@@ -153,6 +155,9 @@ fn cmd_add(
     if let Some(pin) = &version_pin {
         msg.push_str(&format!(" [pinned: {pin}]"));
     }
+    if allow_unsigned {
+        msg.push_str(" [ignore checksums]");
+    }
     println!("{msg}");
     Ok(())
 }
@@ -198,6 +203,44 @@ fn cmd_unpin(name: String) -> Result<()> {
         println!("✓ Removed version pin from '{name}'");
     } else {
         println!("'{name}' is not pinned");
+    }
+    Ok(())
+}
+
+fn cmd_ignore_checksums(name: String) -> Result<()> {
+    let mut config = Config::load()?;
+
+    let app = config
+        .apps
+        .get_mut(&name)
+        .with_context(|| format!("App '{name}' not found"))?;
+
+    if app.allow_unsigned {
+        println!("'{name}' already has checksum verification disabled");
+    } else {
+        app.allow_unsigned = true;
+        config.save()?;
+        info!(app = %name, "Disabled checksum verification");
+        println!("✓ Disabled checksum/signature verification for '{name}'");
+    }
+    Ok(())
+}
+
+fn cmd_verify_checksums(name: String) -> Result<()> {
+    let mut config = Config::load()?;
+
+    let app = config
+        .apps
+        .get_mut(&name)
+        .with_context(|| format!("App '{name}' not found"))?;
+
+    if !app.allow_unsigned {
+        println!("'{name}' already has checksum verification enabled");
+    } else {
+        app.allow_unsigned = false;
+        config.save()?;
+        info!(app = %name, "Enabled checksum verification");
+        println!("✓ Re-enabled checksum/signature verification for '{name}'");
     }
     Ok(())
 }
@@ -249,6 +292,9 @@ fn cmd_list() -> Result<()> {
         }
         if let Some(ref pin) = app.version_pin {
             flags.push(format!("pin:{pin}"));
+        }
+        if app.allow_unsigned {
+            flags.push("ignore-checksums".to_string());
         }
         let flags_str = if flags.is_empty() {
             String::new()
@@ -664,6 +710,40 @@ mod tests {
                 assert_eq!(pin.as_deref(), Some("1.*"));
             }
             _ => panic!("Expected Add command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_add_with_ignore_checksums_alias() {
+        let cli = Cli::parse_from([
+            "galvaan",
+            "add",
+            "owner/repo",
+            "--asset-pattern",
+            "*.rpm",
+            "--ignore-checksums",
+        ]);
+        match cli.command {
+            Commands::Add { allow_unsigned, .. } => assert!(allow_unsigned),
+            _ => panic!("Expected Add command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_ignore_checksums() {
+        let cli = Cli::parse_from(["galvaan", "ignore-checksums", "copilot"]);
+        match cli.command {
+            Commands::IgnoreChecksums { name } => assert_eq!(name, "copilot"),
+            _ => panic!("Expected IgnoreChecksums command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_verify_checksums() {
+        let cli = Cli::parse_from(["galvaan", "verify-checksums", "copilot"]);
+        match cli.command {
+            Commands::VerifyChecksums { name } => assert_eq!(name, "copilot"),
+            _ => panic!("Expected VerifyChecksums command"),
         }
     }
 

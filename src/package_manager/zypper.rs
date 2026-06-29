@@ -16,6 +16,7 @@ impl Zypper {
         let mut args = vec!["zypper", "install", "--dry-run", "-y"];
         if allow_unsigned {
             args.push("--allow-unsigned-rpm");
+            args.push("--no-gpg-checks");
         }
         args.push(package_path);
 
@@ -73,6 +74,7 @@ impl PackageManager for Zypper {
         let mut args = vec!["zypper", "install"];
         if options.allow_unsigned {
             args.push("--allow-unsigned-rpm");
+            args.push("--no-gpg-checks");
         }
         if auto_yes {
             args.push("-y");

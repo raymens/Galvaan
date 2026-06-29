@@ -91,8 +91,8 @@ pub struct TrackedApp {
     pub allow_prerelease: bool,
     /// Version constraint for pinning (e.g. "1.0.24", "1.*", ">=2.0.0,<3.0.0")
     pub version_pin: Option<String>,
-    /// Skip package signature verification (for unsigned packages)
-    #[serde(default)]
+    /// Skip package signature verification/checksum checks (for unsigned packages)
+    #[serde(default, alias = "ignore_checksums")]
     pub allow_unsigned: bool,
 }
 
@@ -601,5 +601,18 @@ version_pin = ">=2.0.0-beta"
         let app = config.apps.get("beta-app").unwrap();
         assert!(app.allow_prerelease);
         assert_eq!(app.version_pin.as_deref(), Some(">=2.0.0-beta"));
+    }
+
+    #[test]
+    fn test_ignore_checksums_alias_from_toml() {
+        let toml_str = r#"
+[apps.unsigned-app]
+repo = "owner/repo"
+asset_pattern = "*.rpm"
+ignore_checksums = true
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let app = config.apps.get("unsigned-app").unwrap();
+        assert!(app.allow_unsigned);
     }
 }
