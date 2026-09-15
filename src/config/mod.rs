@@ -667,7 +667,10 @@ asset_pattern = "*.rpm"
 
     #[test]
     fn test_detect_source_kind_github() {
-        assert_eq!(detect_source_kind("owner/repo").unwrap(), SourceKind::Github);
+        assert_eq!(
+            detect_source_kind("owner/repo").unwrap(),
+            SourceKind::Github
+        );
     }
 
     #[test]

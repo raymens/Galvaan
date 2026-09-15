@@ -13,7 +13,7 @@ use tracing::info;
 
 use cli::{Cli, Commands, ConfigAction};
 use config::{AutoApprove, Config, PackageManagerType, SourceKind, TrackedApp, detect_source_kind};
-use github::{matches_pattern, GitHubClient};
+use github::{GitHubClient, matches_pattern};
 use package_manager::InstallOptions;
 use url_source::{UrlSourceClient, best_effort_version_from_filename, should_update_for_identity};
 
@@ -418,7 +418,10 @@ async fn cmd_check(name: Option<String>, prerelease_override: bool) -> Result<()
             }
         };
 
-        print!("Checking {app_name} [{}]... ", source_type_label(source_kind));
+        print!(
+            "Checking {app_name} [{}]... ",
+            source_type_label(source_kind)
+        );
 
         match source_kind {
             SourceKind::Github => {
@@ -483,8 +486,10 @@ async fn cmd_check(name: Option<String>, prerelease_override: bool) -> Result<()
                 } else {
                     match url_client.probe_identity(&app.source).await {
                         Ok(probe) => {
-                            let changed =
-                                should_update_for_identity(app.url_identity.as_deref(), &probe.identity);
+                            let changed = should_update_for_identity(
+                                app.url_identity.as_deref(),
+                                &probe.identity,
+                            );
                             let installed = app.installed_version.as_deref().unwrap_or("unknown");
                             if changed {
                                 println!(
@@ -637,7 +642,8 @@ async fn cmd_update(
                 let latest = release.tag_name.trim_start_matches('v').to_string();
                 let current = app.installed_version.as_deref().unwrap_or("");
 
-                if specific_version.is_none() && (current == latest || current == release.tag_name) {
+                if specific_version.is_none() && (current == latest || current == release.tag_name)
+                {
                     let pre_label = if release.prerelease {
                         " (prerelease)"
                     } else {

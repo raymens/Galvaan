@@ -47,7 +47,8 @@ impl UrlSourceClient {
                 .with_context(|| format!("Failed fallback metadata probe for {url}"))?;
         }
 
-        if !(response.status().is_success() || response.status() == reqwest::StatusCode::PARTIAL_CONTENT)
+        if !(response.status().is_success()
+            || response.status() == reqwest::StatusCode::PARTIAL_CONTENT)
         {
             anyhow::bail!("URL probe failed for {url}: {}", response.status());
         }
@@ -127,7 +128,11 @@ impl UrlSourceClient {
     }
 }
 
-pub fn compute_identity(etag: Option<&str>, last_modified: Option<&str>, resolved_url: &str) -> String {
+pub fn compute_identity(
+    etag: Option<&str>,
+    last_modified: Option<&str>,
+    resolved_url: &str,
+) -> String {
     if let Some(v) = etag {
         return format!("etag:{}", v.trim());
     }
@@ -214,7 +219,11 @@ mod tests {
 
     #[test]
     fn test_compute_identity_prefers_etag() {
-        let id = compute_identity(Some("\"abc\""), Some("Mon, 01 Jan 2024 00:00:00 GMT"), "https://x/y");
+        let id = compute_identity(
+            Some("\"abc\""),
+            Some("Mon, 01 Jan 2024 00:00:00 GMT"),
+            "https://x/y",
+        );
         assert_eq!(id, "etag:\"abc\"");
     }
 
@@ -250,4 +259,3 @@ mod tests {
         );
     }
 }
-
