@@ -172,10 +172,10 @@ fn cmd_add(
         None => detect_asset_pattern(&pm_type),
     };
 
-    if source_kind == SourceKind::Github {
-        if let Some(ref pin) = version_pin {
-            validate_version_pin(pin)?;
-        }
+    if source_kind == SourceKind::Github
+        && let Some(ref pin) = version_pin
+    {
+        validate_version_pin(pin)?;
     }
 
     let app = TrackedApp {
