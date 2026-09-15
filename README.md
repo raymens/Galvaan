@@ -1,6 +1,6 @@
 # Galvaan
 
-Keep apps up to date based on GitHub releases. Supports multiple Linux distributions and package managers.
+Keep apps up to date from GitHub releases or direct package URLs. Supports multiple Linux distributions and package managers.
 
 ## Installation
 
@@ -76,8 +76,8 @@ galvaan update github-copilot
 ## Usage
 
 ```bash
-# Add an app to track
-galvaan add <owner/repo> --asset-pattern "<glob>" [--name <friendly-name>]
+# Add an app to track (GitHub or URL source)
+galvaan add <source> --asset-pattern "<glob>" [--name <friendly-name>]
 
 # List tracked apps
 galvaan list
@@ -123,11 +123,37 @@ galvaan add owner/beta-app --asset-pattern "*.rpm" --prerelease
 
 # Pin to a major version
 galvaan add owner/stable-app --asset-pattern "*.rpm" --pin "1.*"
+
+# Track a direct package URL (identity-based updates)
+galvaan add https://downloads.example.com/tool/latest/tool-linux-x86_64.rpm \
+  --name example-tool \
+  --package-manager zypper
 ```
+
+## URL source mode
+
+For `https://...` sources, Galvaan decides updates by remote artifact identity, not semantic versions.
+
+Identity priority (deterministic):
+
+1. `ETag` (preferred)
+2. `Last-Modified`
+3. Resolved final URL (after redirects)
+
+Behavior:
+
+- `check`: probes metadata and reports update available only when identity changes (or no local identity exists yet)
+- `update`: re-probes first, downloads/installs only when identity changed, then stores `url_identity`, `last_checked`, and best-effort `installed_version`
+- probe/download/install failures are shown per app and processing continues with other apps
+
+Limitations:
+
+- `--version`, `--pin`, and prerelease controls are GitHub-only
+- version shown for URL sources is informational best effort
 
 ## Version pinning
 
-Pin an app to a specific version or range to control which releases are offered:
+Pin an app to a specific version or range to control which releases are offered (GitHub sources only):
 
 ```bash
 # Pin to exact version
@@ -149,7 +175,7 @@ Pinned apps will only be updated within the constraint. Use `galvaan list` to se
 
 ## Prerelease versions
 
-By default, prerelease versions are skipped. Enable them per-app:
+By default, prerelease versions are skipped. Enable them per-app (GitHub sources only):
 
 ```bash
 # When adding
@@ -162,7 +188,7 @@ galvaan update myapp --prerelease
 
 ## Specific version install
 
-Install a specific release version instead of latest:
+Install a specific release version instead of latest (GitHub sources only):
 
 ```bash
 galvaan update myapp --version v1.0.24
@@ -210,17 +236,25 @@ log_file = "~/.local/share/galvaan/galvaan.log"
 log_level = "info"
 
 [apps.github-copilot]
-repo = "github/app"
+source = "github/app"
 asset_pattern = "*-linux-x64.rpm"
 package_manager = "zypper"
 
 [apps.beta-tool]
-repo = "owner/beta-tool"
+source = "owner/beta-tool"
 asset_pattern = "*.rpm"
 package_manager = "zypper"
 allow_prerelease = true
 version_pin = "1.*"
+
+[apps.url-tool]
+source = "https://downloads.example.com/tool/latest/tool-linux-x86_64.rpm"
+package_manager = "zypper"
+installed_version = "1.2.3" # best effort
+url_identity = "etag:\"abc123\""
 ```
+
+Legacy compatibility: `repo = "owner/repo"` is still accepted as an alias for `source`.
 
 ### Managing settings via CLI
 
