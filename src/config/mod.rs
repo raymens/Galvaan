@@ -4,6 +4,30 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceKind {
+    Github,
+    Url,
+}
+
+pub fn detect_source_kind(source: &str) -> Result<SourceKind> {
+    let trimmed = source.trim();
+    if trimmed.starts_with("https://") || trimmed.starts_with("http://") {
+        return Ok(SourceKind::Url);
+    }
+
+    let mut parts = trimmed.split('/');
+    let owner = parts.next().unwrap_or_default();
+    let repo = parts.next().unwrap_or_default();
+    if !owner.is_empty() && !repo.is_empty() && parts.next().is_none() {
+        return Ok(SourceKind::Github);
+    }
+
+    anyhow::bail!(
+        "Invalid source '{trimmed}'. Use either 'owner/repo' (GitHub) or a full 'https://...' URL"
+    )
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
     #[serde(default)]
@@ -75,8 +99,9 @@ impl std::fmt::Display for AutoApprove {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrackedApp {
-    /// GitHub repository in "owner/repo" format
-    pub repo: String,
+    /// Source for updates: GitHub repository ("owner/repo") or direct package URL
+    #[serde(alias = "repo")]
+    pub source: String,
     /// Glob pattern to match the desired release asset (e.g. "*.x86_64.rpm")
     pub asset_pattern: String,
     /// Package manager to use for installation
@@ -94,6 +119,14 @@ pub struct TrackedApp {
     /// Skip package signature verification/checksum checks (for unsigned packages)
     #[serde(default, alias = "ignore_checksums")]
     pub allow_unsigned: bool,
+    /// Identity of the last installed URL artifact (etag/last-modified/url fallback)
+    pub url_identity: Option<String>,
+}
+
+impl TrackedApp {
+    pub fn source_kind(&self) -> Result<SourceKind> {
+        detect_source_kind(&self.source)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
@@ -271,7 +304,7 @@ mod tests {
         config.apps.insert(
             "test-app".to_string(),
             TrackedApp {
-                repo: "owner/repo".to_string(),
+                source: "owner/repo".to_string(),
                 asset_pattern: "*.rpm".to_string(),
                 package_manager: PackageManagerType::Zypper,
                 installed_version: Some("1.0.0".to_string()),
@@ -279,6 +312,7 @@ mod tests {
                 allow_prerelease: false,
                 version_pin: None,
                 allow_unsigned: false,
+                url_identity: None,
             },
         );
         config.save().unwrap();
@@ -286,7 +320,7 @@ mod tests {
         let loaded = Config::load_from(path).unwrap();
         assert_eq!(loaded.apps.len(), 1);
         let app = loaded.apps.get("test-app").unwrap();
-        assert_eq!(app.repo, "owner/repo");
+        assert_eq!(app.source, "owner/repo");
         assert_eq!(app.asset_pattern, "*.rpm");
         assert_eq!(app.package_manager, PackageManagerType::Zypper);
         assert_eq!(app.installed_version.as_deref(), Some("1.0.0"));
@@ -302,7 +336,7 @@ mod tests {
         config.apps.insert(
             "app1".to_string(),
             TrackedApp {
-                repo: "owner/app1".to_string(),
+                source: "owner/app1".to_string(),
                 asset_pattern: "*.rpm".to_string(),
                 package_manager: PackageManagerType::Zypper,
                 installed_version: None,
@@ -310,12 +344,13 @@ mod tests {
                 allow_prerelease: false,
                 version_pin: None,
                 allow_unsigned: false,
+                url_identity: None,
             },
         );
         config.apps.insert(
             "app2".to_string(),
             TrackedApp {
-                repo: "owner/app2".to_string(),
+                source: "owner/app2".to_string(),
                 asset_pattern: "*.deb".to_string(),
                 package_manager: PackageManagerType::Zypper,
                 installed_version: None,
@@ -323,6 +358,7 @@ mod tests {
                 allow_prerelease: false,
                 version_pin: None,
                 allow_unsigned: false,
+                url_identity: None,
             },
         );
         config.save().unwrap();
@@ -349,7 +385,7 @@ installed_version = "1.0.24"
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let app = config.apps.get("github-copilot").unwrap();
-        assert_eq!(app.repo, "github/app");
+        assert_eq!(app.source, "github/app");
         assert_eq!(app.installed_version.as_deref(), Some("1.0.24"));
     }
 
@@ -557,7 +593,7 @@ asset_pattern = "*.rpm"
         config.apps.insert(
             "pinned-app".to_string(),
             TrackedApp {
-                repo: "owner/repo".to_string(),
+                source: "owner/repo".to_string(),
                 asset_pattern: "*.rpm".to_string(),
                 package_manager: PackageManagerType::Zypper,
                 installed_version: Some("1.0.0".to_string()),
@@ -565,6 +601,7 @@ asset_pattern = "*.rpm"
                 allow_prerelease: true,
                 version_pin: Some("1.*".to_string()),
                 allow_unsigned: false,
+                url_identity: None,
             },
         );
         config.save().unwrap();
@@ -614,5 +651,39 @@ ignore_checksums = true
         let config: Config = toml::from_str(toml_str).unwrap();
         let app = config.apps.get("unsigned-app").unwrap();
         assert!(app.allow_unsigned);
+    }
+
+    #[test]
+    fn test_repo_alias_is_accepted_as_source() {
+        let toml_str = r#"
+[apps.legacy]
+repo = "owner/repo"
+asset_pattern = "*.rpm"
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let app = config.apps.get("legacy").unwrap();
+        assert_eq!(app.source, "owner/repo");
+    }
+
+    #[test]
+    fn test_detect_source_kind_github() {
+        assert_eq!(
+            detect_source_kind("owner/repo").unwrap(),
+            SourceKind::Github
+        );
+    }
+
+    #[test]
+    fn test_detect_source_kind_url() {
+        assert_eq!(
+            detect_source_kind("https://example.com/tool-linux-x64.rpm").unwrap(),
+            SourceKind::Url
+        );
+    }
+
+    #[test]
+    fn test_detect_source_kind_invalid() {
+        assert!(detect_source_kind("owner/repo/extra").is_err());
+        assert!(detect_source_kind("not-a-source").is_err());
     }
 }

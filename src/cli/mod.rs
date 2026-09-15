@@ -3,7 +3,7 @@ use clap_complete::Shell;
 
 #[derive(Parser)]
 #[command(name = "galvaan")]
-#[command(about = "Keep apps up to date based on GitHub releases")]
+#[command(about = "Keep apps up to date from GitHub releases or direct package URLs")]
 #[command(version)]
 pub struct Cli {
     /// Override auto-approve setting (always, no-deps, never)
@@ -20,10 +20,10 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Add a GitHub repository to track
+    /// Add a GitHub repository or direct package URL to track
     Add {
-        /// GitHub repository (owner/repo format)
-        repo: String,
+        /// Update source: GitHub repository (owner/repo) or direct package URL
+        source: String,
         /// Friendly name for this app
         #[arg(short, long)]
         name: Option<String>,
@@ -66,10 +66,10 @@ pub enum Commands {
     Update {
         /// Specific app name to update (updates all if omitted)
         name: Option<String>,
-        /// Install a specific version instead of latest
+        /// Install a specific version instead of latest (GitHub sources only)
         #[arg(long)]
         version: Option<String>,
-        /// Include prerelease versions (overrides per-app setting)
+        /// Include prerelease versions (GitHub sources only; overrides per-app setting)
         #[arg(long)]
         prerelease: bool,
     },

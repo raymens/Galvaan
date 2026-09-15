@@ -3,6 +3,7 @@ mod config;
 mod github;
 mod logging;
 mod package_manager;
+mod url_source;
 
 use anyhow::{Context, Result};
 use chrono::Utc;
@@ -11,9 +12,10 @@ use tempfile::TempDir;
 use tracing::info;
 
 use cli::{Cli, Commands, ConfigAction};
-use config::{AutoApprove, Config, PackageManagerType, TrackedApp};
+use config::{AutoApprove, Config, PackageManagerType, SourceKind, TrackedApp, detect_source_kind};
 use github::{GitHubClient, matches_pattern};
 use package_manager::InstallOptions;
+use url_source::{UrlSourceClient, best_effort_version_from_filename, should_update_for_identity};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -37,7 +39,7 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Commands::Add {
-            repo,
+            source,
             name,
             asset_pattern,
             package_manager,
@@ -45,7 +47,7 @@ async fn main() -> Result<()> {
             pin,
             allow_unsigned,
         } => cmd_add(
-            repo,
+            source,
             name,
             asset_pattern,
             package_manager,
@@ -104,8 +106,40 @@ fn detect_asset_pattern(pm: &PackageManagerType) -> String {
     format!("*linux*{arch_str}*{extension}")
 }
 
+fn source_type_label(kind: SourceKind) -> &'static str {
+    match kind {
+        SourceKind::Github => "github",
+        SourceKind::Url => "url",
+    }
+}
+
+fn default_app_name_from_source(source: &str) -> String {
+    match detect_source_kind(source) {
+        Ok(SourceKind::Github) => source.split('/').next_back().unwrap_or(source).to_string(),
+        Ok(SourceKind::Url) => {
+            let tail = source
+                .split('/')
+                .next_back()
+                .unwrap_or(source)
+                .split('?')
+                .next()
+                .unwrap_or(source)
+                .split('#')
+                .next()
+                .unwrap_or(source)
+                .trim();
+            if tail.is_empty() {
+                "url-package".to_string()
+            } else {
+                tail.to_string()
+            }
+        }
+        Err(_) => source.to_string(),
+    }
+}
+
 fn cmd_add(
-    repo: String,
+    source: String,
     name: Option<String>,
     asset_pattern: Option<String>,
     pm: Option<String>,
@@ -115,7 +149,18 @@ fn cmd_add(
 ) -> Result<()> {
     let mut config = Config::load()?;
 
-    let app_name = name.unwrap_or_else(|| repo.split('/').next_back().unwrap_or(&repo).to_string());
+    let source_kind = detect_source_kind(&source)?;
+
+    if source_kind == SourceKind::Url {
+        if allow_prerelease {
+            anyhow::bail!("--prerelease is only supported for GitHub sources (owner/repo)");
+        }
+        if version_pin.is_some() {
+            anyhow::bail!("--pin is only supported for GitHub sources (owner/repo)");
+        }
+    }
+
+    let app_name = name.unwrap_or_else(|| default_app_name_from_source(&source));
 
     let pm_type = match pm {
         Some(s) => s.parse::<PackageManagerType>()?,
@@ -127,13 +172,14 @@ fn cmd_add(
         None => detect_asset_pattern(&pm_type),
     };
 
-    // Validate pin constraint if provided
-    if let Some(ref pin) = version_pin {
+    if source_kind == SourceKind::Github
+        && let Some(ref pin) = version_pin
+    {
         validate_version_pin(pin)?;
     }
 
     let app = TrackedApp {
-        repo: repo.clone(),
+        source: source.clone(),
         asset_pattern: pattern.clone(),
         package_manager: pm_type,
         installed_version: None,
@@ -141,14 +187,25 @@ fn cmd_add(
         allow_prerelease,
         version_pin: version_pin.clone(),
         allow_unsigned,
+        url_identity: None,
     };
 
     config.apps.insert(app_name.clone(), app);
     config.save()?;
 
-    info!(app = %app_name, repo = %repo, "Added tracked app");
-    let mut msg = format!("✓ Added '{app_name}' (tracking {repo})");
-    msg.push_str(&format!(" [pattern: {pattern}]"));
+    info!(
+        app = %app_name,
+        source = %source,
+        source_kind = source_type_label(source_kind),
+        "Added tracked app"
+    );
+    let mut msg = format!(
+        "✓ Added '{app_name}' ([{}] {source})",
+        source_type_label(source_kind)
+    );
+    if source_kind == SourceKind::Github {
+        msg.push_str(&format!(" [pattern: {pattern}]"));
+    }
     if allow_prerelease {
         msg.push_str(" [prereleases enabled]");
     }
@@ -183,6 +240,11 @@ fn cmd_pin(name: String, constraint: String) -> Result<()> {
         .apps
         .get_mut(&name)
         .with_context(|| format!("App '{name}' not found"))?;
+
+    if app.source_kind()? == SourceKind::Url {
+        anyhow::bail!("pin is only supported for GitHub sources (owner/repo)");
+    }
+
     app.version_pin = Some(constraint.clone());
     config.save()?;
     println!("✓ Pinned '{name}' to {constraint}");
@@ -279,13 +341,17 @@ fn cmd_list() -> Result<()> {
     }
 
     println!(
-        "{:<20} {:<30} {:<15} {:<10} FLAGS",
-        "NAME", "REPO", "VERSION", "PKG MGR"
+        "{:<20} {:<9} {:<30} {:<15} {:<10} STATE",
+        "NAME", "SOURCE", "TARGET", "VERSION", "PKG MGR"
     );
-    println!("{}", "-".repeat(95));
+    println!("{}", "-".repeat(110));
 
     for (name, app) in &config.apps {
         let version = app.installed_version.as_deref().unwrap_or("unknown");
+        let source_kind = app
+            .source_kind()
+            .map(source_type_label)
+            .unwrap_or("invalid");
         let mut flags = Vec::new();
         if app.allow_prerelease {
             flags.push("prerelease".to_string());
@@ -296,14 +362,22 @@ fn cmd_list() -> Result<()> {
         if app.allow_unsigned {
             flags.push("ignore-checksums".to_string());
         }
+        if source_kind == "url" {
+            let identity_state = if app.url_identity.is_some() {
+                "identity:known"
+            } else {
+                "identity:missing"
+            };
+            flags.push(identity_state.to_string());
+        }
         let flags_str = if flags.is_empty() {
             String::new()
         } else {
             flags.join(", ")
         };
         println!(
-            "{:<20} {:<30} {:<15} {:<10} {}",
-            name, app.repo, version, app.package_manager, flags_str
+            "{:<20} [{:<7}] {:<30} {:<15} {:<10} {}",
+            name, source_kind, app.source, version, app.package_manager, flags_str
         );
     }
     Ok(())
@@ -312,6 +386,8 @@ fn cmd_list() -> Result<()> {
 async fn cmd_check(name: Option<String>, prerelease_override: bool) -> Result<()> {
     let mut config = Config::load()?;
     let client = GitHubClient::new()?;
+    let url_client = UrlSourceClient::new()?;
+    let mut had_errors = false;
 
     let apps: Vec<(String, TrackedApp)> = match name {
         Some(ref n) => {
@@ -330,56 +406,107 @@ async fn cmd_check(name: Option<String>, prerelease_override: bool) -> Result<()
     };
 
     for (app_name, app) in &apps {
-        print!("Checking {app_name}... ");
+        let source_kind = match app.source_kind() {
+            Ok(kind) => kind,
+            Err(e) => {
+                println!("Checking {app_name} [invalid]... ✗ error: {e}");
+                had_errors = true;
+                if let Some(tracked) = config.apps.get_mut(app_name) {
+                    tracked.last_checked = Some(Utc::now().to_rfc3339());
+                }
+                continue;
+            }
+        };
 
-        let allow_pre = prerelease_override || app.allow_prerelease;
-        let needs_release_list = allow_pre || app.version_pin.is_some();
+        print!(
+            "Checking {app_name} [{}]... ",
+            source_type_label(source_kind)
+        );
 
-        let release_result = if needs_release_list {
-            // Need full list to filter by prerelease/pin
-            match client.get_releases(&app.repo, 50).await {
-                Ok(releases) => {
-                    let filter = github::ReleaseFilter {
-                        allow_prerelease: allow_pre,
-                        version_pin: app.version_pin.as_deref(),
-                        specific_version: None,
-                    };
-                    match github::find_best_release(&releases, &filter) {
-                        Some(r) => Ok(r.clone()),
-                        None => {
-                            let mut reason = String::from("no matching release found");
-                            if let Some(ref pin) = app.version_pin {
-                                reason.push_str(&format!(" for pin '{pin}'"));
+        match source_kind {
+            SourceKind::Github => {
+                let allow_pre = prerelease_override || app.allow_prerelease;
+                let needs_release_list = allow_pre || app.version_pin.is_some();
+
+                let release_result = if needs_release_list {
+                    match client.get_releases(&app.source, 50).await {
+                        Ok(releases) => {
+                            let filter = github::ReleaseFilter {
+                                allow_prerelease: allow_pre,
+                                version_pin: app.version_pin.as_deref(),
+                                specific_version: None,
+                            };
+                            match github::find_best_release(&releases, &filter) {
+                                Some(r) => Ok(r.clone()),
+                                None => {
+                                    let mut reason = String::from("no matching release found");
+                                    if let Some(ref pin) = app.version_pin {
+                                        reason.push_str(&format!(" for pin '{pin}'"));
+                                    }
+                                    Err(anyhow::anyhow!(reason))
+                                }
                             }
-                            Err(anyhow::anyhow!(reason))
+                        }
+                        Err(e) => Err(e),
+                    }
+                } else {
+                    client.get_latest_release(&app.source).await
+                };
+
+                match release_result {
+                    Ok(release) => {
+                        let current = app.installed_version.as_deref().unwrap_or("none");
+                        let latest = &release.tag_name;
+                        let pre_label = if release.prerelease {
+                            " (prerelease)"
+                        } else {
+                            ""
+                        };
+                        if current == *latest || current == latest.trim_start_matches('v') {
+                            println!("✓ up to date ({latest}){pre_label}");
+                        } else {
+                            println!("⬆ update available: {current} -> {latest}{pre_label}");
+                        }
+                        info!(app = %app_name, current = %current, latest = %latest, "Checked for updates");
+                    }
+                    Err(e) => {
+                        println!("✗ error: {e}");
+                        had_errors = true;
+                        info!(app = %app_name, error = %e, "Check failed");
+                    }
+                }
+            }
+            SourceKind::Url => {
+                if prerelease_override {
+                    println!("✗ error: --prerelease is only supported for GitHub sources");
+                    had_errors = true;
+                } else if app.version_pin.is_some() {
+                    println!("✗ error: version pinning is only supported for GitHub sources");
+                    had_errors = true;
+                } else {
+                    match url_client.probe_identity(&app.source).await {
+                        Ok(probe) => {
+                            let changed = should_update_for_identity(
+                                app.url_identity.as_deref(),
+                                &probe.identity,
+                            );
+                            let installed = app.installed_version.as_deref().unwrap_or("unknown");
+                            if changed {
+                                println!(
+                                    "⬆ update available: identity changed (installed: {installed})"
+                                );
+                            } else {
+                                println!(
+                                    "✓ up to date (identity unchanged, installed: {installed})"
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            println!("✗ error: {e}");
+                            had_errors = true;
                         }
                     }
                 }
-                Err(e) => Err(e),
-            }
-        } else {
-            client.get_latest_release(&app.repo).await
-        };
-
-        match release_result {
-            Ok(release) => {
-                let current = app.installed_version.as_deref().unwrap_or("none");
-                let latest = &release.tag_name;
-                let pre_label = if release.prerelease {
-                    " (prerelease)"
-                } else {
-                    ""
-                };
-                if current == *latest || current == latest.trim_start_matches('v') {
-                    println!("✓ up to date ({latest}){pre_label}");
-                } else {
-                    println!("⬆ update available: {current} → {latest}{pre_label}");
-                }
-                info!(app = %app_name, current = %current, latest = %latest, "Checked for updates");
-            }
-            Err(e) => {
-                println!("✗ error: {e}");
-                info!(app = %app_name, error = %e, "Check failed");
             }
         }
 
@@ -389,6 +516,9 @@ async fn cmd_check(name: Option<String>, prerelease_override: bool) -> Result<()
     }
 
     config.save()?;
+    if had_errors {
+        anyhow::bail!("One or more checks failed");
+    }
     Ok(())
 }
 
@@ -400,6 +530,8 @@ async fn cmd_update(
 ) -> Result<()> {
     let mut config = Config::load()?;
     let client = GitHubClient::new()?;
+    let url_client = UrlSourceClient::new()?;
+    let mut had_errors = false;
 
     let apps: Vec<(String, TrackedApp)> = match name {
         Some(ref n) => {
@@ -423,144 +555,277 @@ async fn cmd_update(
     }
 
     for (app_name, app) in &apps {
-        println!("Checking {app_name} for updates...");
-
-        let allow_pre = prerelease_override || app.allow_prerelease;
-
-        // Determine which release to install
-        let release = if let Some(ref ver) = specific_version {
-            // Try fetching by exact tag first (with and without 'v' prefix)
-            let tag_attempts = if ver.starts_with('v') {
-                vec![ver.clone(), ver.trim_start_matches('v').to_string()]
-            } else {
-                vec![format!("v{ver}"), ver.clone()]
-            };
-            let mut found = None;
-            for tag in &tag_attempts {
-                match client.get_release_by_tag(&app.repo, tag).await {
-                    Ok(r) => {
-                        found = Some(r);
-                        break;
-                    }
-                    Err(_) => continue,
-                }
-            }
-            match found {
-                Some(r) => r,
-                None => {
-                    eprintln!("  ✗ Version '{ver}' not found for {}", app.repo);
-                    continue;
-                }
-            }
-        } else {
-            let needs_release_list = allow_pre || app.version_pin.is_some();
-            if needs_release_list {
-                match client.get_releases(&app.repo, 50).await {
-                    Ok(releases) => {
-                        let filter = github::ReleaseFilter {
-                            allow_prerelease: allow_pre,
-                            version_pin: app.version_pin.as_deref(),
-                            specific_version: None,
-                        };
-                        match github::find_best_release(&releases, &filter) {
-                            Some(r) => r.clone(),
-                            None => {
-                                let mut reason =
-                                    format!("  ✗ No matching release found for {app_name}");
-                                if let Some(ref pin) = app.version_pin {
-                                    reason.push_str(&format!(" (pin: {pin})"));
-                                }
-                                eprintln!("{reason}");
-                                continue;
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("  ✗ Failed to check {app_name}: {e}");
-                        continue;
-                    }
-                }
-            } else {
-                match client.get_latest_release(&app.repo).await {
-                    Ok(r) => r,
-                    Err(e) => {
-                        eprintln!("  ✗ Failed to check {app_name}: {e}");
-                        continue;
-                    }
-                }
-            }
-        };
-
-        let latest = release.tag_name.trim_start_matches('v').to_string();
-        let current = app.installed_version.as_deref().unwrap_or("");
-
-        if specific_version.is_none() && (current == latest || current == release.tag_name) {
-            let pre_label = if release.prerelease {
-                " (prerelease)"
-            } else {
-                ""
-            };
-            println!("  ✓ {app_name} is already up to date ({latest}){pre_label}");
-            continue;
-        }
-
-        // Find matching asset
-        let asset = release
-            .assets
-            .iter()
-            .find(|a| matches_pattern(&a.name, &app.asset_pattern));
-
-        let asset = match asset {
-            Some(a) => a,
-            None => {
-                eprintln!(
-                    "  ✗ No asset matching '{}' found in release {}",
-                    app.asset_pattern, release.tag_name
-                );
-                eprintln!("    Available assets:");
-                for a in &release.assets {
-                    eprintln!("      - {}", a.name);
-                }
+        let source_kind = match app.source_kind() {
+            Ok(kind) => kind,
+            Err(e) => {
+                eprintln!("Checking {app_name} [invalid]... ✗ {e}");
+                had_errors = true;
                 continue;
             }
         };
 
-        let pre_label = if release.prerelease {
-            " (prerelease)"
-        } else {
-            ""
-        };
         println!(
-            "  Downloading {} ({:.1} MB)...{pre_label}",
-            asset.name,
-            asset.size as f64 / 1_048_576.0
+            "Checking {app_name} [{}] for updates...",
+            source_type_label(source_kind)
         );
-        info!(app = %app_name, asset = %asset.name, size = asset.size, version = %latest, "Downloading asset");
 
-        let tmp_dir = TempDir::new().context("Failed to create temp directory")?;
-        let download_path = tmp_dir.path().join(&asset.name);
+        match source_kind {
+            SourceKind::Github => {
+                let allow_pre = prerelease_override || app.allow_prerelease;
 
-        client
-            .download_asset(&asset.browser_download_url, &download_path, asset.size)
-            .await?;
+                let release = if let Some(ref ver) = specific_version {
+                    let tag_attempts = if ver.starts_with('v') {
+                        vec![ver.clone(), ver.trim_start_matches('v').to_string()]
+                    } else {
+                        vec![format!("v{ver}"), ver.clone()]
+                    };
+                    let mut found = None;
+                    for tag in &tag_attempts {
+                        match client.get_release_by_tag(&app.source, tag).await {
+                            Ok(r) => {
+                                found = Some(r);
+                                break;
+                            }
+                            Err(_) => continue,
+                        }
+                    }
+                    match found {
+                        Some(r) => r,
+                        None => {
+                            eprintln!("  ✗ Version '{ver}' not found for {}", app.source);
+                            had_errors = true;
+                            continue;
+                        }
+                    }
+                } else {
+                    let needs_release_list = allow_pre || app.version_pin.is_some();
+                    if needs_release_list {
+                        match client.get_releases(&app.source, 50).await {
+                            Ok(releases) => {
+                                let filter = github::ReleaseFilter {
+                                    allow_prerelease: allow_pre,
+                                    version_pin: app.version_pin.as_deref(),
+                                    specific_version: None,
+                                };
+                                match github::find_best_release(&releases, &filter) {
+                                    Some(r) => r.clone(),
+                                    None => {
+                                        let mut reason =
+                                            format!("  ✗ No matching release found for {app_name}");
+                                        if let Some(ref pin) = app.version_pin {
+                                            reason.push_str(&format!(" (pin: {pin})"));
+                                        }
+                                        eprintln!("{reason}");
+                                        had_errors = true;
+                                        continue;
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("  ✗ Failed to check {app_name}: {e}");
+                                had_errors = true;
+                                continue;
+                            }
+                        }
+                    } else {
+                        match client.get_latest_release(&app.source).await {
+                            Ok(r) => r,
+                            Err(e) => {
+                                eprintln!("  ✗ Failed to check {app_name}: {e}");
+                                had_errors = true;
+                                continue;
+                            }
+                        }
+                    }
+                };
 
-        // Install via package manager
-        let pm = package_manager::create(&app.package_manager);
-        let mut app_install_opts = install_opts.clone();
-        app_install_opts.allow_unsigned = app.allow_unsigned;
-        pm.install(&download_path, &app_install_opts)?;
+                let latest = release.tag_name.trim_start_matches('v').to_string();
+                let current = app.installed_version.as_deref().unwrap_or("");
 
-        // Update config with new version
-        if let Some(tracked) = config.apps.get_mut(app_name) {
-            tracked.installed_version = Some(latest.clone());
-            tracked.last_checked = Some(Utc::now().to_rfc3339());
+                if specific_version.is_none() && (current == latest || current == release.tag_name)
+                {
+                    let pre_label = if release.prerelease {
+                        " (prerelease)"
+                    } else {
+                        ""
+                    };
+                    println!("  ✓ {app_name} is already up to date ({latest}){pre_label}");
+                    continue;
+                }
+
+                let asset = release
+                    .assets
+                    .iter()
+                    .find(|a| matches_pattern(&a.name, &app.asset_pattern));
+
+                let asset = match asset {
+                    Some(a) => a,
+                    None => {
+                        eprintln!(
+                            "  ✗ No asset matching '{}' found in release {}",
+                            app.asset_pattern, release.tag_name
+                        );
+                        eprintln!("    Available assets:");
+                        for a in &release.assets {
+                            eprintln!("      - {}", a.name);
+                        }
+                        had_errors = true;
+                        continue;
+                    }
+                };
+
+                let pre_label = if release.prerelease {
+                    " (prerelease)"
+                } else {
+                    ""
+                };
+                println!(
+                    "  Downloading {} ({:.1} MB)...{pre_label}",
+                    asset.name,
+                    asset.size as f64 / 1_048_576.0
+                );
+                info!(app = %app_name, asset = %asset.name, size = asset.size, version = %latest, "Downloading asset");
+
+                let tmp_dir = match TempDir::new().context("Failed to create temp directory") {
+                    Ok(d) => d,
+                    Err(e) => {
+                        eprintln!("  ✗ {e}");
+                        had_errors = true;
+                        continue;
+                    }
+                };
+                let download_path = tmp_dir.path().join(&asset.name);
+
+                if let Err(e) = client
+                    .download_asset(&asset.browser_download_url, &download_path, asset.size)
+                    .await
+                {
+                    eprintln!("  ✗ Download failed for {app_name}: {e}");
+                    had_errors = true;
+                    continue;
+                }
+
+                let pm = package_manager::create(&app.package_manager);
+                let mut app_install_opts = install_opts.clone();
+                app_install_opts.allow_unsigned = app.allow_unsigned;
+                if let Err(e) = pm.install(&download_path, &app_install_opts) {
+                    eprintln!("  ✗ Install failed for {app_name}: {e}");
+                    had_errors = true;
+                    continue;
+                }
+
+                if let Some(tracked) = config.apps.get_mut(app_name) {
+                    tracked.installed_version = Some(latest.clone());
+                    tracked.last_checked = Some(Utc::now().to_rfc3339());
+                }
+                if let Err(e) = config.save() {
+                    eprintln!("  ✗ Failed to persist state for {app_name}: {e}");
+                    had_errors = true;
+                    continue;
+                }
+
+                info!(app = %app_name, version = %latest, "Updated successfully");
+                println!("  ✓ {app_name} updated to {latest}{pre_label}");
+            }
+            SourceKind::Url => {
+                if specific_version.is_some() {
+                    eprintln!("  ✗ --version is only supported for GitHub sources");
+                    had_errors = true;
+                    continue;
+                }
+                if prerelease_override {
+                    eprintln!("  ✗ --prerelease is only supported for GitHub sources");
+                    had_errors = true;
+                    continue;
+                }
+                if app.version_pin.is_some() {
+                    eprintln!("  ✗ version pinning is only supported for GitHub sources");
+                    had_errors = true;
+                    continue;
+                }
+
+                let probe = match url_client.probe_identity(&app.source).await {
+                    Ok(p) => p,
+                    Err(e) => {
+                        eprintln!("  ✗ Failed to probe URL metadata for {app_name}: {e}");
+                        had_errors = true;
+                        continue;
+                    }
+                };
+
+                if !should_update_for_identity(app.url_identity.as_deref(), &probe.identity) {
+                    println!("  ✓ {app_name} is already up to date (identity unchanged)");
+                    continue;
+                }
+
+                let filename = probe
+                    .filename
+                    .clone()
+                    .unwrap_or_else(|| format!("{app_name}.pkg"));
+                if let Some(size) = probe.content_length {
+                    println!(
+                        "  Downloading {} ({:.1} MB)...",
+                        filename,
+                        size as f64 / 1_048_576.0
+                    );
+                } else {
+                    println!("  Downloading {}...", filename);
+                }
+
+                let tmp_dir = match TempDir::new().context("Failed to create temp directory") {
+                    Ok(d) => d,
+                    Err(e) => {
+                        eprintln!("  ✗ {e}");
+                        had_errors = true;
+                        continue;
+                    }
+                };
+                let download_path = tmp_dir.path().join(&filename);
+
+                if let Err(e) = url_client
+                    .download_package(&probe.resolved_url, &download_path, probe.content_length)
+                    .await
+                {
+                    eprintln!("  ✗ Download failed for {app_name}: {e}");
+                    had_errors = true;
+                    continue;
+                }
+
+                let pm = package_manager::create(&app.package_manager);
+                let mut app_install_opts = install_opts.clone();
+                app_install_opts.allow_unsigned = app.allow_unsigned;
+                if let Err(e) = pm.install(&download_path, &app_install_opts) {
+                    eprintln!("  ✗ Install failed for {app_name}: {e}");
+                    had_errors = true;
+                    continue;
+                }
+
+                let mut detected_version = pm.installed_version(app_name).ok().flatten();
+                if detected_version.is_none() {
+                    detected_version = best_effort_version_from_filename(&filename);
+                }
+
+                if let Some(tracked) = config.apps.get_mut(app_name) {
+                    if let Some(version) = detected_version {
+                        tracked.installed_version = Some(version);
+                    }
+                    tracked.url_identity = Some(probe.identity);
+                    tracked.last_checked = Some(Utc::now().to_rfc3339());
+                }
+                if let Err(e) = config.save() {
+                    eprintln!("  ✗ Failed to persist state for {app_name}: {e}");
+                    had_errors = true;
+                    continue;
+                }
+
+                println!("  ✓ {app_name} updated from URL source");
+            }
         }
-
-        info!(app = %app_name, version = %latest, "Updated successfully");
-        println!("  ✓ {app_name} updated to {latest}{pre_label}");
     }
 
-    config.save()?;
+    if had_errors {
+        anyhow::bail!("One or more updates failed");
+    }
     Ok(())
 }
 
@@ -670,7 +935,7 @@ mod tests {
         ]);
         match cli.command {
             Commands::Add {
-                repo,
+                source,
                 name,
                 asset_pattern,
                 package_manager,
@@ -678,7 +943,7 @@ mod tests {
                 pin,
                 allow_unsigned,
             } => {
-                assert_eq!(repo, "github/app");
+                assert_eq!(source, "github/app");
                 assert_eq!(name.as_deref(), Some("copilot"));
                 assert_eq!(asset_pattern.as_deref(), Some("*-linux-x64.rpm"));
                 assert!(package_manager.is_none());
@@ -1014,16 +1279,21 @@ mod tests {
 
     #[test]
     fn test_app_name_defaults_to_repo_name() {
-        let repo = "github/app";
-        let app_name = repo.split('/').next_back().unwrap_or(repo).to_string();
+        let app_name = default_app_name_from_source("github/app");
         assert_eq!(app_name, "app");
     }
 
     #[test]
     fn test_app_name_handles_no_slash() {
-        let repo = "singlename";
-        let app_name = repo.split('/').next_back().unwrap_or(repo).to_string();
+        let app_name = default_app_name_from_source("singlename");
         assert_eq!(app_name, "singlename");
+    }
+
+    #[test]
+    fn test_app_name_defaults_to_url_filename() {
+        let app_name =
+            default_app_name_from_source("https://downloads.example.com/tool-v1.2.3-linux-x64.rpm");
+        assert_eq!(app_name, "tool-v1.2.3-linux-x64.rpm");
     }
 
     #[test]
