@@ -11,13 +11,20 @@ pub struct Zypper;
 impl Zypper {
     /// Dry-run install to check whether new dependencies would be pulled in.
     /// Returns true if only the target package is affected (no extra deps).
-    fn is_deps_only_update(&self, package_path: &str, allow_unsigned: bool) -> Result<bool> {
+    fn is_deps_only_update(
+        &self,
+        package_path: &str,
+        allow_unsigned: bool,
+        ignore_checksums: bool,
+    ) -> Result<bool> {
         debug!("Running zypper dry-run to check for dependency changes");
-        let mut args = vec!["zypper", "install", "--dry-run", "-y"];
-        if allow_unsigned {
-            args.push("--allow-unsigned-rpm");
-        }
-        args.push(package_path);
+        let args = Self::build_install_args(
+            package_path,
+            allow_unsigned,
+            ignore_checksums,
+            true,
+            true,
+        );
 
         let output = Command::new("sudo")
             .args(&args)
@@ -37,6 +44,30 @@ impl Zypper {
 
         Ok(!has_new_deps)
     }
+
+    fn build_install_args(
+        package_path: &str,
+        allow_unsigned: bool,
+        ignore_checksums: bool,
+        dry_run: bool,
+        auto_yes: bool,
+    ) -> Vec<String> {
+        let mut args = vec!["zypper".to_string(), "install".to_string()];
+        if dry_run {
+            args.push("--dry-run".to_string());
+        }
+        if allow_unsigned {
+            args.push("--allow-unsigned-rpm".to_string());
+        }
+        if ignore_checksums {
+            args.push("--no-gpg-checks".to_string());
+        }
+        if auto_yes {
+            args.push("-y".to_string());
+        }
+        args.push(package_path.to_string());
+        args
+    }
 }
 
 impl PackageManager for Zypper {
@@ -53,7 +84,8 @@ impl PackageManager for Zypper {
                 true
             }
             AutoApprove::NoDeps => {
-                let no_new_deps = self.is_deps_only_update(path_str, options.allow_unsigned)?;
+                let no_new_deps =
+                    self.is_deps_only_update(path_str, options.allow_unsigned, options.ignore_checksums)?;
                 if no_new_deps {
                     debug!("Auto-approve: no new dependencies detected — using -y");
                     println!("  No new dependencies — auto-approving.");
@@ -70,14 +102,13 @@ impl PackageManager for Zypper {
             }
         };
 
-        let mut args = vec!["zypper", "install"];
-        if options.allow_unsigned {
-            args.push("--allow-unsigned-rpm");
-        }
-        if auto_yes {
-            args.push("-y");
-        }
-        args.push(path_str);
+        let args = Self::build_install_args(
+            path_str,
+            options.allow_unsigned,
+            options.ignore_checksums,
+            false,
+            auto_yes,
+        );
 
         let (stdout_cfg, stderr_cfg) = if options.quiet {
             debug!("Quiet mode: suppressing package manager output");
@@ -146,3 +177,48 @@ impl PackageManager for Zypper {
         "zypper"
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Zypper;
+
+    #[test]
+    fn build_install_args_includes_no_gpg_checks_when_unsigned_checks_are_disabled() {
+        let args = Zypper::build_install_args("/tmp/app.rpm", true, true, false, true);
+        assert_eq!(
+            args,
+            vec![
+                "zypper",
+                "install",
+                "--allow-unsigned-rpm",
+                "--no-gpg-checks",
+                "-y",
+                "/tmp/app.rpm",
+            ]
+        );
+    }
+
+    #[test]
+    fn build_install_args_omits_gpg_bypass_flags_by_default() {
+        let args = Zypper::build_install_args("/tmp/app.rpm", false, false, false, false);
+        assert_eq!(args, vec!["zypper", "install", "/tmp/app.rpm"]);
+    }
+
+    #[test]
+    fn build_dry_run_args_include_dry_run_and_unsigned_flags() {
+        let args = Zypper::build_install_args("/tmp/app.rpm", true, true, true, true);
+        assert_eq!(
+            args,
+            vec![
+                "zypper",
+                "install",
+                "--dry-run",
+                "--allow-unsigned-rpm",
+                "--no-gpg-checks",
+                "-y",
+                "/tmp/app.rpm",
+            ]
+        );
+    }
+}
+

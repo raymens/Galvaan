@@ -116,9 +116,12 @@ pub struct TrackedApp {
     pub allow_prerelease: bool,
     /// Version constraint for pinning (e.g. "1.0.24", "1.*", ">=2.0.0,<3.0.0")
     pub version_pin: Option<String>,
-    /// Skip package signature verification/checksum checks (for unsigned packages)
-    #[serde(default, alias = "ignore_checksums")]
+    /// Allow installing unsigned packages
+    #[serde(default)]
     pub allow_unsigned: bool,
+    /// Skip package signature verification/checksum checks
+    #[serde(default)]
+    pub ignore_checksums: bool,
     /// Identity of the last installed URL artifact (etag/last-modified/url fallback)
     pub url_identity: Option<String>,
 }
@@ -312,6 +315,7 @@ mod tests {
                 allow_prerelease: false,
                 version_pin: None,
                 allow_unsigned: false,
+                ignore_checksums: false,
                 url_identity: None,
             },
         );
@@ -344,6 +348,7 @@ mod tests {
                 allow_prerelease: false,
                 version_pin: None,
                 allow_unsigned: false,
+                ignore_checksums: false,
                 url_identity: None,
             },
         );
@@ -358,6 +363,7 @@ mod tests {
                 allow_prerelease: false,
                 version_pin: None,
                 allow_unsigned: false,
+                ignore_checksums: false,
                 url_identity: None,
             },
         );
@@ -601,6 +607,7 @@ asset_pattern = "*.rpm"
                 allow_prerelease: true,
                 version_pin: Some("1.*".to_string()),
                 allow_unsigned: false,
+                ignore_checksums: false,
                 url_identity: None,
             },
         );
@@ -641,12 +648,25 @@ version_pin = ">=2.0.0-beta"
     }
 
     #[test]
-    fn test_ignore_checksums_alias_from_toml() {
+    fn test_ignore_checksums_from_toml() {
         let toml_str = r#"
 [apps.unsigned-app]
 repo = "owner/repo"
 asset_pattern = "*.rpm"
 ignore_checksums = true
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let app = config.apps.get("unsigned-app").unwrap();
+        assert!(app.ignore_checksums);
+    }
+
+    #[test]
+    fn test_allow_unsigned_from_toml() {
+        let toml_str = r#"
+[apps.unsigned-app]
+repo = "owner/repo"
+asset_pattern = "*.rpm"
+allow_unsigned = true
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
         let app = config.apps.get("unsigned-app").unwrap();
