@@ -52,15 +52,16 @@ impl Zypper {
         dry_run: bool,
         auto_yes: bool,
     ) -> Vec<String> {
-        let mut args = vec!["zypper".to_string(), "install".to_string()];
+        let mut args = vec!["zypper".to_string()];
+        if ignore_checksums {
+            args.push("--no-gpg-checks".to_string());
+        }
+        args.push("install".to_string());
         if dry_run {
             args.push("--dry-run".to_string());
         }
         if allow_unsigned {
             args.push("--allow-unsigned-rpm".to_string());
-        }
-        if ignore_checksums {
-            args.push("--no-gpg-checks".to_string());
         }
         if auto_yes {
             args.push("-y".to_string());
