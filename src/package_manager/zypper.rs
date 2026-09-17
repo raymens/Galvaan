@@ -190,9 +190,9 @@ mod tests {
             args,
             vec![
                 "zypper",
+                "--no-gpg-checks",
                 "install",
                 "--allow-unsigned-rpm",
-                "--no-gpg-checks",
                 "-y",
                 "/tmp/app.rpm",
             ]
@@ -212,10 +212,10 @@ mod tests {
             args,
             vec![
                 "zypper",
+                "--no-gpg-checks",
                 "install",
                 "--dry-run",
                 "--allow-unsigned-rpm",
-                "--no-gpg-checks",
                 "-y",
                 "/tmp/app.rpm",
             ]
