@@ -34,7 +34,7 @@ async fn main() -> Result<()> {
             None => config.settings.auto_approve.clone(),
         },
         quiet: cli.quiet || config.settings.quiet_package_manager,
-        allow_unsigned: false, // overridden per-app in cmd_update
+        allow_unsigned: false,   // overridden per-app in cmd_update
         ignore_checksums: false, // overridden per-app in cmd_update
     };
 
@@ -1044,7 +1044,9 @@ mod tests {
             "--ignore-checksums",
         ]);
         match cli.command {
-            Commands::Add { ignore_checksums, .. } => assert!(ignore_checksums),
+            Commands::Add {
+                ignore_checksums, ..
+            } => assert!(ignore_checksums),
             _ => panic!("Expected Add command"),
         }
     }

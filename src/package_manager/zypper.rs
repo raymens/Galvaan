@@ -18,13 +18,8 @@ impl Zypper {
         ignore_checksums: bool,
     ) -> Result<bool> {
         debug!("Running zypper dry-run to check for dependency changes");
-        let args = Self::build_install_args(
-            package_path,
-            allow_unsigned,
-            ignore_checksums,
-            true,
-            true,
-        );
+        let args =
+            Self::build_install_args(package_path, allow_unsigned, ignore_checksums, true, true);
 
         let output = Command::new("sudo")
             .args(&args)
@@ -85,8 +80,11 @@ impl PackageManager for Zypper {
                 true
             }
             AutoApprove::NoDeps => {
-                let no_new_deps =
-                    self.is_deps_only_update(path_str, options.allow_unsigned, options.ignore_checksums)?;
+                let no_new_deps = self.is_deps_only_update(
+                    path_str,
+                    options.allow_unsigned,
+                    options.ignore_checksums,
+                )?;
                 if no_new_deps {
                     debug!("Auto-approve: no new dependencies detected — using -y");
                     println!("  No new dependencies — auto-approving.");
@@ -222,4 +220,3 @@ mod tests {
         );
     }
 }
-
