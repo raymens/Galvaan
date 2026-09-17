@@ -48,16 +48,16 @@ async fn main() -> Result<()> {
             pin,
             allow_unsigned,
             ignore_checksums,
-        } => cmd_add(
+        } => cmd_add(AddOptions {
             source,
             name,
             asset_pattern,
-            package_manager,
-            prerelease,
-            pin,
+            pm: package_manager,
+            allow_prerelease: prerelease,
+            version_pin: pin,
             allow_unsigned,
             ignore_checksums,
-        )?,
+        })?,
         Commands::Remove { name } => cmd_remove(name)?,
         Commands::List => cmd_list()?,
         Commands::Check { name, prerelease } => cmd_check(name, prerelease).await?,
@@ -143,7 +143,7 @@ fn default_app_name_from_source(source: &str) -> String {
     }
 }
 
-fn cmd_add(
+struct AddOptions {
     source: String,
     name: Option<String>,
     asset_pattern: Option<String>,
@@ -152,7 +152,19 @@ fn cmd_add(
     version_pin: Option<String>,
     allow_unsigned: bool,
     ignore_checksums: bool,
-) -> Result<()> {
+}
+
+fn cmd_add(options: AddOptions) -> Result<()> {
+    let AddOptions {
+        source,
+        name,
+        asset_pattern,
+        pm,
+        allow_prerelease,
+        version_pin,
+        allow_unsigned,
+        ignore_checksums,
+    } = options;
     let mut config = Config::load()?;
 
     let source_kind = detect_source_kind(&source)?;
