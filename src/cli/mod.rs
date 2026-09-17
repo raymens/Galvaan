@@ -39,9 +39,12 @@ pub enum Commands {
         /// Pin to a version constraint (e.g. "1.0.24", "1.*", ">=2.0.0,<3.0.0")
         #[arg(long)]
         pin: Option<String>,
-        /// Skip package signature/checksum verification (for unsigned packages)
-        #[arg(long, aliases = ["ignore-checksums", "allow-unsigned-rpm"])]
+        /// Allow installing unsigned packages
+        #[arg(long, aliases = ["allow-unsigned-rpm"])]
         allow_unsigned: bool,
+        /// Skip package signature/checksum verification
+        #[arg(long, aliases = ["ignore-checksums", "no-gpg-checks"])]
+        ignore_checksums: bool,
     },
 
     /// Remove a tracked app
@@ -88,7 +91,7 @@ pub enum Commands {
         name: String,
     },
 
-    /// Disable checksum/signature verification for an app (for unsigned packages)
+    /// Disable checksum/signature verification for an app
     #[command(name = "ignore-checksums")]
     IgnoreChecksums {
         /// Name of the app
@@ -98,6 +101,20 @@ pub enum Commands {
     /// Re-enable checksum/signature verification for an app
     #[command(name = "verify-checksums")]
     VerifyChecksums {
+        /// Name of the app
+        name: String,
+    },
+
+    /// Allow unsigned packages for an app
+    #[command(name = "allow-unsigned")]
+    AllowUnsigned {
+        /// Name of the app
+        name: String,
+    },
+
+    /// Re-enable unsigned-package checks for an app
+    #[command(name = "verify-unsigned")]
+    VerifyUnsigned {
         /// Name of the app
         name: String,
     },

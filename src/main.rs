@@ -34,7 +34,8 @@ async fn main() -> Result<()> {
             None => config.settings.auto_approve.clone(),
         },
         quiet: cli.quiet || config.settings.quiet_package_manager,
-        allow_unsigned: false, // overridden per-app in cmd_update
+        allow_unsigned: false,   // overridden per-app in cmd_update
+        ignore_checksums: false, // overridden per-app in cmd_update
     };
 
     match cli.command {
@@ -46,15 +47,17 @@ async fn main() -> Result<()> {
             prerelease,
             pin,
             allow_unsigned,
-        } => cmd_add(
+            ignore_checksums,
+        } => cmd_add(AddOptions {
             source,
             name,
             asset_pattern,
-            package_manager,
-            prerelease,
-            pin,
+            pm: package_manager,
+            allow_prerelease: prerelease,
+            version_pin: pin,
             allow_unsigned,
-        )?,
+            ignore_checksums,
+        })?,
         Commands::Remove { name } => cmd_remove(name)?,
         Commands::List => cmd_list()?,
         Commands::Check { name, prerelease } => cmd_check(name, prerelease).await?,
@@ -67,6 +70,8 @@ async fn main() -> Result<()> {
         Commands::Unpin { name } => cmd_unpin(name)?,
         Commands::IgnoreChecksums { name } => cmd_ignore_checksums(name)?,
         Commands::VerifyChecksums { name } => cmd_verify_checksums(name)?,
+        Commands::AllowUnsigned { name } => cmd_allow_unsigned(name)?,
+        Commands::VerifyUnsigned { name } => cmd_verify_unsigned(name)?,
         Commands::Config { action } => cmd_config(action)?,
         Commands::Completions { shell } => cli::generate_completions(shell),
     }
@@ -138,7 +143,7 @@ fn default_app_name_from_source(source: &str) -> String {
     }
 }
 
-fn cmd_add(
+struct AddOptions {
     source: String,
     name: Option<String>,
     asset_pattern: Option<String>,
@@ -146,7 +151,20 @@ fn cmd_add(
     allow_prerelease: bool,
     version_pin: Option<String>,
     allow_unsigned: bool,
-) -> Result<()> {
+    ignore_checksums: bool,
+}
+
+fn cmd_add(options: AddOptions) -> Result<()> {
+    let AddOptions {
+        source,
+        name,
+        asset_pattern,
+        pm,
+        allow_prerelease,
+        version_pin,
+        allow_unsigned,
+        ignore_checksums,
+    } = options;
     let mut config = Config::load()?;
 
     let source_kind = detect_source_kind(&source)?;
@@ -187,6 +205,7 @@ fn cmd_add(
         allow_prerelease,
         version_pin: version_pin.clone(),
         allow_unsigned,
+        ignore_checksums,
         url_identity: None,
     };
 
@@ -213,7 +232,10 @@ fn cmd_add(
         msg.push_str(&format!(" [pinned: {pin}]"));
     }
     if allow_unsigned {
-        msg.push_str(" [ignore checksums]");
+        msg.push_str(" [allow unsigned packages]");
+    }
+    if ignore_checksums {
+        msg.push_str(" [signature verification disabled]");
     }
     println!("{msg}");
     Ok(())
@@ -277,10 +299,10 @@ fn cmd_ignore_checksums(name: String) -> Result<()> {
         .get_mut(&name)
         .with_context(|| format!("App '{name}' not found"))?;
 
-    if app.allow_unsigned {
+    if app.ignore_checksums {
         println!("'{name}' already has checksum verification disabled");
     } else {
-        app.allow_unsigned = true;
+        app.ignore_checksums = true;
         config.save()?;
         info!(app = %name, "Disabled checksum verification");
         println!("✓ Disabled checksum/signature verification for '{name}'");
@@ -296,13 +318,51 @@ fn cmd_verify_checksums(name: String) -> Result<()> {
         .get_mut(&name)
         .with_context(|| format!("App '{name}' not found"))?;
 
-    if !app.allow_unsigned {
+    if !app.ignore_checksums {
         println!("'{name}' already has checksum verification enabled");
     } else {
-        app.allow_unsigned = false;
+        app.ignore_checksums = false;
         config.save()?;
         info!(app = %name, "Enabled checksum verification");
         println!("✓ Re-enabled checksum/signature verification for '{name}'");
+    }
+    Ok(())
+}
+
+fn cmd_allow_unsigned(name: String) -> Result<()> {
+    let mut config = Config::load()?;
+
+    let app = config
+        .apps
+        .get_mut(&name)
+        .with_context(|| format!("App '{name}' not found"))?;
+
+    if app.allow_unsigned {
+        println!("'{name}' already allows unsigned packages");
+    } else {
+        app.allow_unsigned = true;
+        config.save()?;
+        info!(app = %name, "Allowed unsigned packages");
+        println!("✓ Allowed unsigned packages for '{name}'");
+    }
+    Ok(())
+}
+
+fn cmd_verify_unsigned(name: String) -> Result<()> {
+    let mut config = Config::load()?;
+
+    let app = config
+        .apps
+        .get_mut(&name)
+        .with_context(|| format!("App '{name}' not found"))?;
+
+    if !app.allow_unsigned {
+        println!("'{name}' already verifies unsigned-package status");
+    } else {
+        app.allow_unsigned = false;
+        config.save()?;
+        info!(app = %name, "Re-enabled unsigned-package checks");
+        println!("✓ Re-enabled unsigned-package checks for '{name}'");
     }
     Ok(())
 }
@@ -360,6 +420,9 @@ fn cmd_list() -> Result<()> {
             flags.push(format!("pin:{pin}"));
         }
         if app.allow_unsigned {
+            flags.push("allow-unsigned".to_string());
+        }
+        if app.ignore_checksums {
             flags.push("ignore-checksums".to_string());
         }
         if source_kind == "url" {
@@ -708,6 +771,7 @@ async fn cmd_update(
                 let pm = package_manager::create(&app.package_manager);
                 let mut app_install_opts = install_opts.clone();
                 app_install_opts.allow_unsigned = app.allow_unsigned;
+                app_install_opts.ignore_checksums = app.ignore_checksums;
                 if let Err(e) = pm.install(&download_path, &app_install_opts) {
                     eprintln!("  ✗ Install failed for {app_name}: {e}");
                     had_errors = true;
@@ -794,6 +858,7 @@ async fn cmd_update(
                 let pm = package_manager::create(&app.package_manager);
                 let mut app_install_opts = install_opts.clone();
                 app_install_opts.allow_unsigned = app.allow_unsigned;
+                app_install_opts.ignore_checksums = app.ignore_checksums;
                 if let Err(e) = pm.install(&download_path, &app_install_opts) {
                     eprintln!("  ✗ Install failed for {app_name}: {e}");
                     had_errors = true;
@@ -942,6 +1007,7 @@ mod tests {
                 prerelease,
                 pin,
                 allow_unsigned,
+                ignore_checksums,
             } => {
                 assert_eq!(source, "github/app");
                 assert_eq!(name.as_deref(), Some("copilot"));
@@ -950,6 +1016,7 @@ mod tests {
                 assert!(!prerelease);
                 assert!(pin.is_none());
                 assert!(!allow_unsigned);
+                assert!(!ignore_checksums);
             }
             _ => panic!("Expected Add command"),
         }
@@ -989,7 +1056,9 @@ mod tests {
             "--ignore-checksums",
         ]);
         match cli.command {
-            Commands::Add { allow_unsigned, .. } => assert!(allow_unsigned),
+            Commands::Add {
+                ignore_checksums, ..
+            } => assert!(ignore_checksums),
             _ => panic!("Expected Add command"),
         }
     }
@@ -1011,6 +1080,30 @@ mod tests {
     }
 
     #[test]
+    fn test_cli_parse_add_with_ignore_checksums_and_allow_unsigned() {
+        let cli = Cli::parse_from([
+            "galvaan",
+            "add",
+            "owner/repo",
+            "--asset-pattern",
+            "*.rpm",
+            "--ignore-checksums",
+            "--allow-unsigned-rpm",
+        ]);
+        match cli.command {
+            Commands::Add {
+                allow_unsigned,
+                ignore_checksums,
+                ..
+            } => {
+                assert!(allow_unsigned);
+                assert!(ignore_checksums);
+            }
+            _ => panic!("Expected Add command"),
+        }
+    }
+
+    #[test]
     fn test_cli_parse_ignore_checksums() {
         let cli = Cli::parse_from(["galvaan", "ignore-checksums", "copilot"]);
         match cli.command {
@@ -1025,6 +1118,24 @@ mod tests {
         match cli.command {
             Commands::VerifyChecksums { name } => assert_eq!(name, "copilot"),
             _ => panic!("Expected VerifyChecksums command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_allow_unsigned() {
+        let cli = Cli::parse_from(["galvaan", "allow-unsigned", "copilot"]);
+        match cli.command {
+            Commands::AllowUnsigned { name } => assert_eq!(name, "copilot"),
+            _ => panic!("Expected AllowUnsigned command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_verify_unsigned() {
+        let cli = Cli::parse_from(["galvaan", "verify-unsigned", "copilot"]);
+        match cli.command {
+            Commands::VerifyUnsigned { name } => assert_eq!(name, "copilot"),
+            _ => panic!("Expected VerifyUnsigned command"),
         }
     }
 
@@ -1257,6 +1368,7 @@ mod tests {
             auto_approve: config.settings.auto_approve.clone(),
             quiet: config.settings.quiet_package_manager,
             allow_unsigned: false,
+            ignore_checksums: false,
         };
         assert_eq!(opts.auto_approve, AutoApprove::NoDeps);
         assert!(!opts.quiet);
@@ -1272,6 +1384,7 @@ mod tests {
             auto_approve,
             quiet: true,
             allow_unsigned: false,
+            ignore_checksums: false,
         };
         assert_eq!(opts.auto_approve, AutoApprove::Always);
         assert!(opts.quiet);

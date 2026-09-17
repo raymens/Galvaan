@@ -13,8 +13,10 @@ use crate::config::{AutoApprove, PackageManagerType};
 pub struct InstallOptions {
     pub auto_approve: AutoApprove,
     pub quiet: bool,
-    /// Skip package signature verification (dangerous — only for unsigned packages)
+    /// Allow installing unsigned packages
     pub allow_unsigned: bool,
+    /// Skip package signature/checksum verification
+    pub ignore_checksums: bool,
 }
 
 /// Trait for package manager implementations
