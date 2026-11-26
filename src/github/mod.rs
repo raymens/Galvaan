@@ -156,6 +156,19 @@ impl GitHubClient {
 /// Match an asset name against a glob-like pattern (supports * wildcard)
 pub fn matches_pattern(name: &str, pattern: &str) -> bool {
     simple_glob_match(pattern, name)
+        || reversed_linux_arch_pattern(pattern)
+            .is_some_and(|reversed| simple_glob_match(&reversed, name))
+}
+
+fn reversed_linux_arch_pattern(pattern: &str) -> Option<String> {
+    const ARCHITECTURES: &[&str] = &["x86_64", "x64", "amd64", "aarch64", "arm64"];
+
+    let mut parts: Vec<&str> = pattern.split('*').collect();
+    let linux_index = parts.iter().position(|part| *part == "linux")?;
+    let arch_index = parts.iter().position(|part| ARCHITECTURES.contains(part))?;
+
+    parts.swap(linux_index, arch_index);
+    Some(parts.join("*"))
 }
 
 /// Options for filtering releases when looking for the best candidate
@@ -257,6 +270,27 @@ mod tests {
             "GitHub-Copilot-linux-arm64.rpm",
             "*-arm64.rpm"
         ));
+    }
+
+    #[test]
+    fn test_glob_matches_linux_and_arch_in_either_order() {
+        assert!(matches_pattern(
+            "bruno_4.1.0_x86_64_linux.rpm",
+            "*linux*x86_64*.rpm"
+        ));
+        assert!(matches_pattern(
+            "app-linux-x86_64.rpm",
+            "*x86_64*linux*.rpm"
+        ));
+        assert!(!matches_pattern(
+            "bruno_4.1.0_aarch64_linux.rpm",
+            "*linux*x86_64*.rpm"
+        ));
+    }
+
+    #[test]
+    fn test_glob_keeps_other_components_ordered() {
+        assert!(!matches_pattern("bar-foo.rpm", "*foo*bar*.rpm"));
     }
 
     #[test]
